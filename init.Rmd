@@ -14,6 +14,7 @@ library(tidyverse)
 library(patchwork)
 library(ggthemes)
 library(knitr)
+library(broom)
 library(haven)
 
 source("country_data_utils.R")
@@ -36,8 +37,29 @@ balances        <- read_csv("data/food-balances.csv")
 consumer_prices <- read_csv("data/consumer-prices.csv")
 
 # Global data
-yields          <- read_csv("data/yields-global.csv")
+yields_global          <- read_csv("data/yields-global.csv")
 volumes_global  <- read_csv("data/volumes-global.csv")
+
+values_global  <- read_csv("data/values-global.csv")
+
+production_all <- read_csv("data/production-crops-all-normalized.csv") # this makes yields and volumes all redundant
+
+production_global <- production_all %>% 
+    select(Year, Area, `Item Code`, Item, Element, Unit, Value) %>%
+    filter(Unit %in% c("ha", "hg/ha", "tonnes"))
+
+values_global_minimal <- values_global %>%
+    select(Year, Area, `Item Code` = `Item Code (FAO)`, Item, Element, Unit, Value)
+
+global_agri_data <- rbind(production_global, values_global_minimal)
+global_agri_wide <- global_agri_data %>%
+    select(-Unit) %>%
+    filter(Year >= 1991) %>%
+    pivot_wider(names_from="Element", values_from="Value") %>%
+    rename(`Gross Production Value` = `Gross Production Value (constant 2014-2016 thousand US$)`) %>%
+    mutate(
+           econ_yield = `Gross Production Value` / `Area harvested`
+    )
 
 volumes_minimal <- volumes %>% select(Year, `Item Code (FAO)`, Item, Element, Unit, Value)
 
@@ -65,7 +87,7 @@ agri_wide <- agri_data %>%
 df_full <- read_stata("data/DEV309_FullDataset_2019.dta")
 
 
-# ------------- prod data 
+# ------------- productivity dat 
 econ_transform <- read_rds("data/etd-release2021.rds")
 
 
@@ -108,7 +130,6 @@ How does Pakistan compare to other countries in terms of labor and land producti
 
 ```{r fig.height=10, fig.width=10}
 
-
 inds <- c(
           "Agri Employment" = "WB_sl_agr_empl_zs",
           "Agri GDP Share"  = "WB_nv_agr_totl_zs",
@@ -116,7 +137,12 @@ inds <- c(
           "Cereal yield" = "WB_ag_yld_crel_kg",
           "Agri Value Added (current US$)" = "WB_nv_agr_totl_cd",
           "Agri Value Added (constant 2010 US$)" = "WB_nv_agr_totl_kd",
-          "GDP per capita (constant 2010 US$)" = "WB_ny_gdp_pcap_kd"
+          "GDP per capita (constant 2010 US$)" = "WB_ny_gdp_pcap_kd",
+          "Irrigated Land" = "WB_ag_lnd_irig_ag_zs",
+          "Irrigated Land2" = "QG_fao_luagrirrac",
+          "Total Employment" = "IMF_LE",
+          "pop-working-age" = "WB_sp_pop_1564_to_zs",
+          "population" = "WB_sp_pop_totl"
         )
 
 years <- c(1991, 2000, 2010, 2019)
@@ -124,7 +150,9 @@ years <- c(1991, 2000, 2010, 2019)
 cc_prod_data_all <- df_full %>%
     select(year, countrycode, regionname, adminregion, incomelevel, {{inds}}) %>%
     mutate(
-           agri_prod = `Agri Value Added (constant 2010 US$)` / `Agri Employment`
+           agri_employ = `Agri Employment` * (`pop-working-age` * population),
+           agri_prod = `Agri Value Added (constant 2010 US$)` / agri_employ
+
     )
 
 cc_prod_data <- cc_prod_data_all %>% filter(year %in% years)
@@ -181,16 +209,17 @@ cc_prod_data_all %>%
 
 ```
 
-As time goes on, how does Pakistans agri productivity improve relative to others? The gap between Pakistan and India has widened considerably, but it is in line with improvements to Agri Productivity in other South Asian countries. 
+As time goes on, how does Pakistans agri productivity improve relative to others? We see that the gap between Pakistan and India has widened considerably. Labor productivity growth is the slowest in South Asia between 2000 and 2019, but levels are still higher.
 
 ```{r}
 
 cc_prod_data_all %>%
     filter(regionname == "South Asia") %>%
     filter(!is.na(agri_prod)) %>%
+    filter(countrycode != "MDV") %>%
     ggplot(aes(x=year, y=agri_prod, color=countrycode, label=countrycode)) +
     geom_line() + 
-    geom_text(data = filter(cc_prod_data, ((regionname == "South Asia") & (year == 2010))), nudge_y = 1e8) +
+    geom_text(data = . %>% filter(year == 2010)) +
     theme_few() +
     scale_color_few() +
     theme(legend.position = "none") + 
@@ -199,8 +228,6 @@ cc_prod_data_all %>%
     )
 
 ```
-
-We can easily compare growth rates in agri labor prod in the last decade and see where Pakistan stands. Since 1991, it has had the slowest rate of labot productivity growth in all of South Asia. This is also true when we look at the growth between 2010 and 2019 - it is tied with nepal. Here we chart 2000 and 2019.
 
 ```{r}
 
@@ -258,44 +285,335 @@ cc_prod_data %>%
 
 ```
 
-This remains true even if we compare for its initial level of agri productivity in 2000. 
+Replicating this analysis for every year we have data for, and controlling for Log GDP per capita, Log Agri Labor Productivity, and the agri share of GDP, Pakistans log Agri labor productivity is slower than expected for most years since 2000. Below we plot the residuals.
 
 ```{r fig.width = 10, fig.height = 10}
 
-cc_prod_data %>%
+# lets control for initial level of agri prod and gdp per capita 
+# to see if we are at a predicted level of agri prod now given those two things 
+# maybe we can also do this for agri share of gdp (but then we get into structural transformation
+# territory)
+
+# lets compare 2000 to 2019 
+lag_diff <- 10 
+regress_dat <- cc_prod_data_all %>%
     group_by(countrycode) %>%
     arrange(year) %>%
-    filter((year == n_base_year) | (year == target_year)) %>%
     mutate(
-           growth = (lead(agri_prod) - agri_prod) / lead(agri_prod) * 100
+           prev_agri_prod = lag(agri_prod, lag_diff),
+           growth = (agri_prod - prev_agri_prod) / prev_agri_prod * 100
     ) %>%
     ungroup() %>%
-    filter(year == n_base_year) %>% 
-    filter(!(countrycode %in% c("IRQ"))) %>%
-    ggplot(aes(x=log(`agri_prod`), y=growth, label=countrycode)) +
-    geom_text() +
-    geom_smooth(method='lm') +
-    geom_label(data = . %>% filter(countrycode=="PAK"), color="red") +
-    theme_few() + 
+    mutate(
+           l_agri_prod = log(prev_agri_prod),
+           l_future_agri_prod = log(agri_prod),
+           l_gdppc = log(`GDP per capita (constant 2010 US$)`),
+    ) %>% 
+    select(year, countrycode, l_gdppc, l_agri_prod, l_future_agri_prod, agri_share=`Agri GDP Share`, `Irrigated Land`)  %>%
+    filter(!is.na(l_agri_prod) & !is.na(l_agri_prod) & !is.na(l_future_agri_prod)) 
+
+regress_info <- regress_dat %>%
+    group_by(year) %>%
+    nest() %>%
+    mutate(
+           model = map(data, ~lm(l_future_agri_prod ~ l_gdppc + l_agri_prod + agri_share, .)),
+           tidied = map(model, tidy)
+    ) %>%
+    unnest(tidied) %>%
+    ungroup()
+
+regress_coefs <- regress_info %>%
+    select(year, term, estimate, model) %>%
+    pivot_wider(names_from=term, names_prefix = "coef_", values_from=estimate)
+
+
+# join this with pakistan per these years 
+regress_dat %>% 
+    left_join(regress_coefs, by="year") %>%
+    filter(countrycode == "PAK") %>%
+    mutate(
+           predict_change = `coef_(Intercept)` + 
+               coef_l_gdppc * l_gdppc + 
+               coef_l_agri_prod * l_agri_prod +
+               coef_agri_share * agri_share,
+           residual = l_future_agri_prod - predict_change
+    ) %>%
+    ggplot(aes(x=year, y=residual)) +
+    geom_bar(stat="identity") +
+    theme_few() +
     labs(
-         title = paste("Change in Agri Labor Productivity between", n_base_year, "and", target_year),
-         y = "Percent Difference"
-    ) 
+         title = "Did Pakistans Agri Productivity Grow faster or Slower than Expected?",
+         subtitle = paste("Prediction based on log gdp per capita, log agri productivity and agri share of GDP", lag_diff, "years prior")
+    )
+
+
+# regress_info %>%
+#     select(year, term, `p.value`) %>%
+#     pivot_wider(names_from=term, values_from=`p.value`) %>%
+#     kable()
+
+#    ggplot(aes(x=year, y=`p.value`, color=term)) +
+#    geom_line() + 
+#    geom_hline(yintercept = 0.1) +
+#    geom_hline(yintercept = 0.05) +
+#    theme_few() +
+#    scale_color_few() + 
+#    labs(
+#         title = "Regression Coefficients over time"
+#    )
 
 ```
+
 
 So the story seems to be - Pakistan was endowed with a high labor productivity in Agriculture coming into the 90s, but was unable to grow it significantly since then. Labor could not be absorbed into more services work, and industry productivity fell. 
 
 
-Next - I want to develop a comparison group for Pakistan based on the land shares allocated to the largest crops. So far we are looking just at South Asia, and countries in its GDP per capita neighbourhood.
-
-
-## Overview 
+## What does Pakistan Produce? 
 
 The approach I want to take is to start by looking at productivity spreads per crop. Some active questions - what is Pakistan producing, how good is it at doing this, how is it changing over time? 
+Some defintions:
 
-First question - what does Pakistan produce? I took 2019 because it is recent and pre-covid.
+Economic yield is the gross production value / area 
+Relative economic yield how Pakistans economic yield relates to the average economic yield for that crop. 
 
+Market proportion is the gross production value of pakistan relative to the total production value in the world. 
+
+
+
+```{r fig.height = 10, fig.width = 10}
+# want to know pakistans yield relative to global yield, and its ranking 
+# want to compute econ_yield as well which is value over land area used
+
+# names(global_agri_wide)
+
+production_yearly <- global_agri_wide %>%
+    group_by(Year, Item) %>%
+    summarise(
+              avg_econ_yield = mean(econ_yield, na.rm = T),
+              avg_yield = mean(Yield, na.rm = T),
+              total_area_harvested = sum(`Area harvested`, na.rm = T),
+              total_production = sum(Production, na.rm = T),
+              total_production_value = sum(`Gross Production Value`, na.rm = T)
+    ) %>%
+    ungroup()
+
+pakistan_relative_productions <- global_agri_wide %>%
+    filter(Area == "Pakistan") %>%
+    filter(Year == base_year) %>%
+    left_join(production_yearly %>% filter(Year == base_year) %>% select(-Year), by="Item") %>%
+    mutate(
+           relative_econ_yield = econ_yield / avg_econ_yield, 
+           relative_yield = Yield / avg_yield, 
+           production_proportion = Production / total_production, 
+           market_proportion = `Gross Production Value` / total_production_value
+    )
+
+pakistan_relative_productions %>%
+    arrange(-relative_econ_yield, -market_proportion) %>%
+    select(Item, "Econ Yield"=econ_yield, "Relative Econ Yield"=relative_econ_yield, "Market Proportion"=market_proportion, "Production Proportion"=production_proportion) %>%
+    slice_head(n = 50) %>%
+    kable()
+
+pakistan_relative_productions %>%
+    ggplot(aes(x=market_proportion, y=relative_yield, label=Item)) +
+    geom_text() +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Market Proportion",
+         x = "Market Proportion",
+         y = "Relative Yield"
+    )
+
+pakistan_relative_productions %>%
+    filter((relative_yield < 2) & (market_proportion < 0.1)) %>%
+    ggplot(aes(x=market_proportion, y=relative_yield, label=Item)) +
+    geom_text() +
+    geom_hline(yintercept = 1, linetype="dotted") +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Market Proportion",
+         x = "Market Proportion",
+         y = "Relative Yield"
+    )
+
+pakistan_relative_productions %>%
+    filter(market_proportion < 0.1) %>%
+    ggplot(aes(x=market_proportion, y=relative_econ_yield, label=Item)) +
+    geom_text() +
+    geom_hline(yintercept = 1, linetype="dotted") +
+    theme_few() + 
+    labs(
+         title = "Relative Econ Yield vs Market Proportion",
+         x = "Market Proportion",
+         y = "Relative Econ Yield"
+    )
+
+pakistan_relative_productions %>%
+    ggplot(aes(x=market_proportion, y=relative_econ_yield, label=Item)) +
+    geom_text() +
+    geom_hline(yintercept = 1, linetype="dotted") +
+    theme_few() + 
+    labs(
+         title = "Relative Econ Yield vs Market Proportion",
+         x = "Market Proportion",
+         y = "Relative Econ Yield"
+    )
+
+pakistan_relative_productions %>%
+    ggplot(aes(x=relative_yield, y=relative_econ_yield, size=`Area harvested`, label=Item)) +
+    geom_point() +
+    geom_hline(yintercept = 1, linetype="dotted") +
+    geom_vline(xintercept = 1, linetype="dotted") +
+    geom_abline(slope = 1, intercept = 0) +
+    theme_few() + 
+    labs(
+         title = "Relative Economic Yield vs Relative Yield",
+         y = "Relative Economic Yield",
+         x = "Relative Yield"
+    )
+
+pakistan_relative_productions %>%
+    ggplot(aes(x=relative_yield, y=relative_econ_yield, label=Item)) +
+    geom_text() +
+    geom_hline(yintercept = 1, linetype="dotted") +
+    geom_vline(xintercept = 1, linetype="dotted") +
+    geom_abline(slope = 1, intercept = 0) +
+    theme_few() + 
+    labs(
+         title = "Relative Economic Yield vs Relative Yield",
+         y = "Relative Economic Yield",
+         x = "Relative Yield"
+    )
+
+pakistan_relative_productions %>%
+    ggplot(aes(x=production_proportion, y=market_proportion, label=Item)) +
+    geom_text() +
+    geom_abline(slope = 1, intercept = 0) +
+    theme_few() + 
+    labs(
+         title = "Market Proportion vs Production Proportion",
+         y = "Market Proportion (pak $ / world $)",
+         x = "Production Proportion (pak kg/world kg)"
+    )
+
+pakistan_relative_productions %>%
+    filter(market_proportion < 0.1) %>%
+    ggplot(aes(x=production_proportion, y=market_proportion, label=Item)) +
+    geom_text() +
+    geom_abline(slope = 1, intercept = 0) +
+    theme_few() + 
+    labs(
+         title = "Market Proportion vs Production Proportion",
+         y = "Market Proportion (pak $ / world $)",
+         x = "Production Proportion (pak kg/world kg)"
+    )
+
+```
+
+
+```{r}
+# What is pakistans global ranking on each item of produce?
+
+items <- yields_global %>% 
+    filter((Year == base_year) & (Area == "Pakistan")) %>%
+    select(Item)
+
+rankings <- tibble()
+rankings$item       = ""
+rankings$mean       = 0
+rankings$std_err    = 0
+rankings$rel_yield  = 0
+rankings$rel_volume = 0
+rankings$max        = 0
+rankings$rating     = 0
+rankings$vol_rating = 0
+rankings$pak_yield  = 0
+rankings$pak_value  = 0
+rankings$pak_volume = 0
+rankings$pak_export = 0
+rankings$area_harv  = 0
+
+#mutate(
+#       econ_yield = `Gross Production Value (constant 2014-2016 thousand US$)` / `Area harvested`
+#) %>%
+
+for(i in 1:nrow(items)) {
+
+    item <- items[[i, 1]]
+    yield_ranking <- yields_global %>%
+        filter(Year == base_year) %>%
+        filter(Item == !!item) %>%
+        select(Area, Value) %>%
+        arrange(-Value) %>%
+        mutate(
+               position     = row_number()
+        )
+
+    volume_ranking <- volumes_global %>%
+        filter(Year == base_year) %>%
+        filter(Item == !!item) %>%
+        select(Area, Value) %>%
+        arrange(-Value) %>%
+        mutate(
+               position = row_number()
+        )
+
+    value_ranking <- values_global %>%
+        filter(Year == base_year) %>%
+        filter(Item == !!item) %>%
+        select(Area, Value) %>%
+        arrange(-Value) %>%
+        mutate(
+               position = row_number()
+        )
+
+    yield_position        <- (yield_ranking %>% filter(Area == "Pakistan") %>% select(position))[[1]]
+    pak_val               <- (yield_ranking %>% filter(Area == "Pakistan") %>% select(Value))[[1]]
+    volume_position       <- (volume_ranking %>% filter(Area == "Pakistan") %>% select(position))[[1]]
+    value_position        <- (value_ranking %>% filter(Area == "Pakistan") %>% select(position))[[1]]
+
+    rel_row  <- agri_wide %>% filter(Item == !!item) %>% filter(Year == base_year)
+
+    rankings <- rankings %>%
+        add_row(
+                item        = item,
+                mean        = round(mean(yield_ranking$Value), 0),
+                std_err     = round(sd(yield_ranking$Value), 0),
+                max         = max(yield_ranking$Value),
+                rating      = yield_position,
+                vol_rating  = volume_position,
+                pak_yield   = rel_row$Yield[[1]],
+                rel_yield   = pak_val / mean(yield_ranking$Value, na.rm = T),
+                pak_volume  = rel_row$Production[[1]],
+                rel_volume  = pak_volume / mean(volume_ranking$Value, na.rm = T),
+                pak_value   = rel_row$`Gross Production Value (current thousand US$)`[[1]],
+                pak_export  = (rel_row$`Export Value`[[1]] - rel_row$`Import Value`[[1]]),
+                area_harv   = rel_row$`Area harvested`
+        )
+}
+
+kable(
+      rankings %>% 
+          arrange(-rel_yield) %>% 
+          select(-std_err, -pak_volume, -rel_volume, -max, -area_harv) %>%
+          slice_head(n = 50) %>%
+          rename(
+                 `Avg Yield` = mean,
+                 `Yield / Avg Yield` = rel_yield, 
+                 `Yield Rank` = rating,
+                 `Volume Rank` = vol_rating,
+                 `Pak Yield` = pak_yield,
+                 `Pak Value` = pak_value,
+                 `Pak Export` = pak_export
+          ), 
+      digits = 2,
+      caption = "Top 50 Crops by Yield Rank"
+)
+
+```
+
+
+What does Pakistan produce? I took 2019 because it is recent and pre-covid.
 ```{r fig.width = 10, fig.height = 10}
 
 agri_data %>% 
@@ -402,71 +720,6 @@ Another approach is to compare yields of the crops produced against others in th
 
 ```{r fig.width = 10, fig.height = 10}
 
-# What is pakistans global ranking on each item of produce?
-
-items <- yields %>% 
-    filter((Year == base_year) & (Area == "Pakistan")) %>%
-    select(Item)
-
-rankings <- tibble()
-rankings$item       = ""
-rankings$mean       = 0
-rankings$std_err    = 0
-rankings$rel_yield  = 0
-rankings$rel_volume = 0
-rankings$max        = 0
-rankings$rating     = 0
-rankings$vol_rating = 0
-rankings$pak_yield  = 0
-rankings$pak_value  = 0
-rankings$pak_volume = 0
-rankings$pak_export = 0
-rankings$area_harv  = 0
-
-for(i in 1:nrow(items)) {
-
-    item <- items[[i, 1]]
-    ranking <- yields %>%
-        filter(Year == base_year) %>%
-        filter(Item == !!item) %>%
-        select(Area, Value) %>%
-        arrange(-Value) %>%
-        mutate(
-               position     = row_number()
-        )
-
-    volume_ranking <- volumes_global %>%
-        filter(Year == base_year) %>%
-        filter(Item == !!item) %>%
-        select(Area, Value) %>%
-        arrange(-Value) %>%
-        mutate(
-               position = row_number()
-        )
-
-    position <- (ranking %>% filter(Area == "Pakistan") %>% select(position))[[1]]
-    pak_val  <- (ranking %>% filter(Area == "Pakistan") %>% select(Value))[[1]]
-    volume_position <- (volume_ranking %>% filter(Area == "Pakistan") %>% select(position))[[1]]
-
-    rel_row  <- agri_wide %>% filter(Item == !!item) %>% filter(Year == base_year)
-
-    rankings <- rankings %>%
-        add_row(
-                item        = item,
-                mean        = round(mean(ranking$Value), 0),
-                std_err     = round(sd(ranking$Value), 0),
-                max         = max(ranking$Value),
-                rating      = position,
-                vol_rating  = volume_position,
-                pak_yield   = pak_val,
-                rel_yield   = pak_val / mean(ranking$Value, na.rm = T),
-                pak_volume  = rel_row$Production[[1]],
-                rel_volume  = pak_volume / mean(volume_ranking$Value, na.rm = T),
-                pak_value   = rel_row$`Gross Production Value (current thousand US$)`[[1]],
-                pak_export  = (rel_row$`Export Value`[[1]] - rel_row$`Import Value`[[1]]),
-                area_harv   = rel_row$`Area harvested`
-        )
-}
 
 
 kable(
@@ -542,6 +795,8 @@ On the volume side, the amount of land dedicated to it as a proportion of total 
 I think I am getting interested in crops we dedicate a lot of land / produce a lot of, but we do poorly. And then we can focus on why it is done poorly and what could be done about it. 
 
 Such crops would be ones with very low Yield / avg yield in the world, and a very large world rank in terms of tonnes produced. Below we look at those products, given that the area harvested is above some minimum threshold. 
+
+The new approach is to look at things we produce a lot of, and examine the difference between crops grown well and crops grown poorly. 
 
 \newpage
 
@@ -1078,5 +1333,31 @@ cc_prod_data %>%
          subtitle = "Pakistan circled",
          caption = "Source: World Bank"
     )
+
+```
+
+This remains true even if we compare for its initial level of agri productivity in 2000. 
+
+```{r fig.width = 10, fig.height = 10}
+
+cc_prod_data %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    filter((year == n_base_year) | (year == target_year)) %>%
+    mutate(
+           growth = (lead(agri_prod) - agri_prod) / lead(agri_prod) * 100
+    ) %>%
+    ungroup() %>%
+    filter(year == n_base_year) %>% 
+    filter(!(countrycode %in% c("IRQ"))) %>%
+    ggplot(aes(x=log(`agri_prod`), y=growth, label=countrycode)) +
+    geom_text() +
+    geom_smooth(method='lm') +
+    geom_label(data = . %>% filter(countrycode=="PAK"), color="red") +
+    theme_few() + 
+    labs(
+         title = paste("Change in Agri Labor Productivity between", n_base_year, "and", target_year),
+         y = "Percent Difference"
+    ) 
 
 ```

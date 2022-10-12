@@ -1,0 +1,531 @@
+---
+title: "Agriculture in Pakistan"
+output:
+    pdf_document: default
+    html_document: default
+---
+
+```{r, echo=FALSE, message=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+library(tidyverse)
+library(patchwork)
+library(ggthemes)
+library(knitr)
+library(broom)
+library(haven)
+
+base_year = 2019
+
+df_full <- read_stata("data/DEV309_FullDataset_2019.dta")
+
+# Global data
+yields_global   <- read_csv("data/yields-global.csv")
+volumes_global  <- read_csv("data/volumes-global.csv")
+
+values_global   <- read_csv("data/values-global.csv")
+
+production_all  <- read_csv("data/production-crops-all-normalized.csv") # this makes yields and volumes all redundant
+
+production_global <- production_all %>% 
+    select(Year, Area, `Item Code`, Item, Element, Unit, Value) %>%
+    filter(Unit %in% c("ha", "hg/ha", "tonnes"))
+
+values_global_minimal <- values_global %>%
+    select(Year, Area, `Item Code` = `Item Code (FAO)`, Item, Element, Unit, Value)
+
+global_agri_data <- rbind(production_global, values_global_minimal)
+global_agri_wide <- global_agri_data %>%
+    select(-Unit) %>%
+    filter(Year >= 1991) %>%
+    pivot_wider(names_from="Element", values_from="Value") %>%
+    rename(`Gross Production Value` = `Gross Production Value (constant 2014-2016 thousand US$)`) %>%
+    mutate(
+           econ_yield = `Gross Production Value` / `Area harvested`
+    )
+```
+
+## Metrics Used
+
+We use the following indicators to generate our metrics:
+
+\textbf{Value Added in Agriculture, constant 2010 US$}: The net output of the Agriculture sector, including forestry hunting and fishing, after adding up all outputs and subtracting intermediate inputs. It is calculated without making deductions for depreciations of fabricated assets or depletion and degradation of natural resources. 
+
+\textbf{Employment in Agriculture (% of total employment) (modeled ILO estimate)}: Employment is defined as persons of working age who were engaged in any activity to produce goods or produce services for pay or profit, whether at work during the reference period or not at work due to temporary absence from a job, or to working-time arrangement. The agriculture sector consists of activities in agriculture, hunting, forestry and fishing
+
+\textbf{Working Age Population}: Total population between the ages 15 to 64. 
+
+\textbf{Arable Land}: Arable land (in hectares) includes land defined by the FAO as land under temporary crops (double-cropped areas are counted once), temporary meadows for mowing or for pasture, land under market or kitchen gardens, and land temporarily fallow. Land abandoned as a result of shifting cultivation is excluded. 
+
+## Pakistan have low Value Added per Worker in Agriculture?
+
+For it's level of GDP per Capita, Pakistan has a slightly above-expected valued added per worker in agriculture. 
+
+```{r fig.height=10, fig.width=10}
+
+inds <- c(
+          "Agri GDP Share"  = "WB_nv_agr_totl_zs",
+          "Agri Value Added (current US$)" = "WB_nv_agr_totl_cd",
+          "Agri Value Added (constant 2010 US$)" = "WB_nv_agr_totl_kd",
+          "GDP per capita (constant 2010 US$)" = "WB_ny_gdp_pcap_kd",
+
+          "Agri Employment" = "WB_sl_agr_empl_zs",
+          "Agri Female Employment" = "WB_sl_agr_empl_fe_zs",
+          "Agri Male Employment" = "WB_sl_agr_empl_ma_zs",
+          "pop-working-age" = "WB_sp_pop_1564_to_zs",
+          "population" = "WB_sp_pop_totl",
+          "pop-working-age-female" = "WB_sp_pop_1564_fe_in",
+          "pop-working-age-male" = "WB_sp_pop_1564_ma_in",
+          "pop-working-age2" = "WB_sp_pop_1564_to",
+
+          "Agricultural Land" = "WB_ag_lnd_agri_k2",
+          "Arable Land" = "WB_ag_lnd_arbl_ha",
+          "Cereal yield" = "WB_ag_yld_crel_kg",
+          "Irrigated Land" = "WB_ag_lnd_irig_ag_zs",
+          "Irrigated Land2" = "QG_fao_luagrirrac"
+        )
+
+years <- c(1991, 2000, 2010, 2019)
+
+cc_prod_data_all <- df_full %>%
+    select(year, countrycode, regionname, adminregion, incomelevel, {{inds}}) %>%
+    mutate(
+           # agri_employ = `Agri Employment` * (`pop-working-age` * population),
+           agri_employ = `Agri Employment`/100 * `pop-working-age2`,
+           agri_prod = `Agri Value Added (constant 2010 US$)` / agri_employ,
+           agri_fem_employ = `Agri Female Employment`/100 * `pop-working-age-female`,
+           agri_male_employ = `Agri Male Employment`/100 * `pop-working-age-male`,
+
+           va_per_hectare = `Agri Value Added (constant 2010 US$)` / `Arable Land`
+    )
+
+cc_prod_data <- cc_prod_data_all %>% filter(year %in% years)
+
+cc_prod_data %>%
+    ggplot(aes(x=log(`GDP per capita (constant 2010 US$)`), y=log(agri_prod), label=countrycode)) +
+    geom_point(aes(color=(regionname == "South Asia"))) +
+    geom_smooth(method='lm') +
+    geom_point(data=filter(cc_prod_data, countrycode=="PAK"), shape=21, size=6) +
+    facet_wrap(~year, ncol = 1) +
+    scale_color_few(name = "Region", labels=c("Other", "South Asia")) +
+    theme_few() + 
+    labs(
+         title = "Comparing Value Added per Worker in Agriculture",
+         subtitle = "Pakistan circled",
+         caption = "Source: World Bank"
+    )
+
+```
+
+## How does Pakistans Value Added per Worker Change over Time?
+
+While it has a relatively high level of value added per worker in agriculture, Pakistan has the slowest growth in value added per worker between 2000 and 2019 in South Asia. 
+
+```{r}
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_prod)) %>%
+    filter(year == base_year) %>%
+    ggplot(aes(x=reorder(countrycode, -agri_prod), y=agri_prod)) +
+    geom_bar(stat="identity") + 
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") + 
+    theme_few() +
+    labs(
+         title = "South Asian Value Added in Agriculture per Worker",
+         subtitle = paste(base_year),
+         y = "Value Added per Worker\n (constant 2010 US$)",
+         x = "Country"
+    )
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_prod)) %>%
+    filter(countrycode != "MDV") %>%
+    ggplot(aes(x=year, y=agri_prod, color=countrycode, label=countrycode)) +
+    geom_line() + 
+    geom_text(data = . %>% filter(year == 2018), nudge_y=12, nudge_x = 2) +
+    theme_few() +
+    scale_color_few() +
+    theme(legend.position = "none") + 
+    labs(
+         title = "South Asian Value Added in Agriculture per Worker over Time",
+         y = "Value Added per Worker\n (constant 2010 US$)",
+         x = "Year"
+    )
+
+```
+
+```{r}
+
+n_base_year <- 2000
+target_year <- 2019
+
+growth_dat <- cc_prod_data %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    filter((year == n_base_year) | (year == target_year)) %>%
+    mutate(
+        growth = (lead(agri_prod) - agri_prod) / agri_prod * 100
+    ) %>%
+    filter(year == n_base_year) %>%
+    filter(!is.na(growth))
+
+growth_dat %>%
+    filter(regionname == "South Asia") %>%
+    ggplot(aes(x=reorder(countrycode, growth), y=growth)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill = "orange", stat="identity") +
+    theme_few() + 
+    theme(legend.position = "none") + 
+    labs(
+            title = paste("Growth in Value Added per Worker between ", n_base_year, "and", target_year),
+            subtitle = "Agriculture in South Asia",
+            x = "Country",
+            y = "Value Added per Worker Growth (%)"
+    )
+```
+
+```{r fig.width = 10, fig.height = 10}
+
+# lets control for initial level of agri prod and gdp per capita 
+# to see if we are at a predicted level of agri prod now given those two things 
+# maybe we can also do this for agri share of gdp (but then we get into structural transformation
+# territory)
+
+# lets compare 2000 to 2019 
+lag_diff <- 10 
+regress_dat <- cc_prod_data_all %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    mutate(
+           prev_agri_prod = lag(agri_prod, lag_diff),
+           growth = (agri_prod - prev_agri_prod) / prev_agri_prod * 100
+    ) %>%
+    ungroup() %>%
+    mutate(
+           l_agri_prod = log(prev_agri_prod),
+           l_future_agri_prod = log(agri_prod),
+           l_gdppc = log(`GDP per capita (constant 2010 US$)`),
+    ) %>% 
+    select(year, countrycode, l_gdppc, l_agri_prod, l_future_agri_prod, agri_share=`Agri GDP Share`, `Irrigated Land`)  %>%
+    filter(!is.na(l_agri_prod) & !is.na(l_agri_prod) & !is.na(l_future_agri_prod)) 
+
+regress_info <- regress_dat %>%
+    group_by(year) %>%
+    nest() %>%
+    mutate(
+           model = map(data, ~lm(l_future_agri_prod ~ l_gdppc + l_agri_prod + agri_share, .)),
+           tidied = map(model, tidy)
+    ) %>%
+    unnest(tidied) %>%
+    ungroup()
+
+regress_coefs <- regress_info %>%
+    select(year, term, estimate, model) %>%
+    pivot_wider(names_from=term, names_prefix = "coef_", values_from=estimate)
+
+
+# join this with pakistan per these years 
+regress_dat %>% 
+    left_join(regress_coefs, by="year") %>%
+    filter(countrycode == "PAK") %>%
+    mutate(
+           predict_change = `coef_(Intercept)` + 
+               coef_l_gdppc * l_gdppc + 
+               coef_l_agri_prod * l_agri_prod +
+               coef_agri_share * agri_share,
+           residual = l_future_agri_prod - predict_change
+    ) %>%
+    ggplot(aes(x=year, y=residual)) +
+    geom_bar(stat="identity") +
+    theme_few() +
+    labs(
+         title = "Did Pakistans Agri Value Added per Worker Grow faster or Slower than Expected?",
+         subtitle = paste("Prediction based on log gdp per capita, log agri productivity and agri share of GDP", lag_diff, "years prior")
+    )
+
+# regress_info %>%
+#     select(year, term, `p.value`) %>%
+#     pivot_wider(names_from=term, values_from=`p.value`) %>%
+#     kable()
+
+#    ggplot(aes(x=year, y=`p.value`, color=term)) +
+#    geom_line() + 
+#    geom_hline(yintercept = 0.1) +
+#    geom_hline(yintercept = 0.05) +
+#    theme_few() +
+#    scale_color_few() + 
+#    labs(
+#         title = "Regression Coefficients over time"
+#    )
+
+```
+
+## Decomposing Growth in Value Added per Worker
+
+Value added per worker in agriculture is measured as gross output of the sector, minus intermediate costs, and divided by the number of people working in that sector. 
+
+Is Pakistans low growth driven by slow growth in value add, or by fast growth in the labor pool, compared to other south asian countries?
+
+Both. Pakistan had the slowest growth in total agriculture value add between 2000 and 2019 in South Asia. Additionally, Pakistan had the largest growth in total agriculture labor in all of South Asia. 
+
+Decomposing the agriculture labor growth, we see that while both male and female labor growth is higher than comparators, female growth significantly outpaces male labor growth. 
+
+
+```{r}
+
+lag_diff <- 19 # so that we get 2019 vs 2000
+
+decompose_data <- cc_prod_data_all %>%
+    select(
+           countrycode,
+           regionname,
+           year, 
+           agri_prod, 
+           agri_employ, 
+           `Agri Value Added (constant 2010 US$)`,
+           agri_fem_employ,
+           agri_male_employ
+    ) %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    rename(agri_va = `Agri Value Added (constant 2010 US$)`) %>%
+    mutate(
+           prev_agri_prod = lag(agri_prod, lag_diff), 
+           prev_agri_employ = lag(agri_employ, lag_diff),
+           prev_agri_va = lag(agri_va, lag_diff),
+
+           agri_prod_growth = (agri_prod - prev_agri_prod) / prev_agri_prod * 100,
+           agri_employ_growth = (agri_employ - prev_agri_employ) / prev_agri_employ * 100,
+           agri_va_growth = (agri_va - prev_agri_va) / prev_agri_va * 100,
+
+           agri_prod_growth2 = ((1 + agri_va_growth) / (1 + agri_employ_growth)) - 1, # this matches
+
+           prev_agri_male = lag(agri_male_employ, lag_diff),
+           prev_agri_fem  = lag(agri_fem_employ, lag_diff),
+           agri_male_growth = (agri_male_employ - prev_agri_male)/prev_agri_male * 100,
+           agri_fem_growth  = (agri_fem_employ - prev_agri_fem)/prev_agri_fem * 100,
+    ) %>%
+    ungroup()
+
+# lets compare labor growth rates in SA
+
+decompose_data %>%
+    filter(year == base_year) %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_va_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, agri_va_growth), y=agri_va_growth)) + 
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = paste("Percent growth in total agri value added between", base_year - lag_diff, "and", base_year),
+         subtitle = "South Asia",
+         y = "% growth in total agri value added in Agriculture\n (constant 2010 US$)",
+         x = "Country"
+    )
+
+
+decompose_data %>%
+    filter(year == base_year) %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_va_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, -agri_employ_growth), y=agri_employ_growth)) + 
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = paste("Percent growth in total labor employment between", base_year - lag_diff, "and", base_year),
+         subtitle = "South Asia",
+         y = "% growth in people employed in Agriculture",
+         x = "Country"
+    )
+
+```
+We can decompose the growth in labor between men and women. 
+
+```{r}
+
+decompose_data %>%
+    filter(year == base_year) %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_va_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, -agri_fem_growth), y=agri_fem_growth)) + 
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = paste("Percent growth in female labor employment between", base_year - lag_diff, "and", base_year),
+         subtitle = "South Asia",
+         y = "% growth in females employed in Agriculture",
+         x = "Country"
+    )
+
+decompose_data %>%
+    filter(year == base_year) %>%
+    filter(regionname == "South Asia") %>%
+    filter(!is.na(agri_va_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, -agri_male_growth), y=agri_male_growth)) + 
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = paste("Percent growth in male labor employment between", base_year - lag_diff, "and", base_year),
+         subtitle = "Agriculture in South Asia",
+         y = "% growth in males employed in Agriculture",
+         x = "Country"
+    )
+
+```
+
+
+```{r fig.height=10, fig.width=10}
+
+# geom_bar(stat="identity", position="dodge") +
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    select(year, countrycode, agri_fem_employ, agri_male_employ) %>%
+    pivot_longer(-c(year, countrycode)) %>%
+    filter(!is.na(value)) %>%
+    ggplot(aes(x=year, y=value, color=name)) +
+    geom_line() +
+    theme_few() +
+    scale_color_few() +
+    facet_wrap(~countrycode, scales = "free_y") + 
+    labs(
+         title = "Female vs Male Employment in Agriculture over Time",
+         subtitle = "Agriculture in South Asia",
+         y = "Population",
+         x = "Year"
+    )
+
+
+```
+
+## Value Added per Hectare of Arable Land
+
+In the world, Pakistan has roughly expected levels of Value Added per Hectare of Arable land for its level of GDP per capita. 
+
+However, the next figure shows that Pakistan has the lowest value added per hectare of arable land in all of South Asia, bar Afghanistan. 
+
+Growth has also been slow, and it has only been faster than Sri Lanka. Sri Lanka has had a greater growth in value added over this time period, and has slower growth in this metric due to a 40% increase in the amount of Arable land over the period. 
+
+
+```{r fig.width = 10, fig.height = 10}
+
+cc_prod_data_all %>%
+    filter(year %in% c(1991, 2000, 2010, 2016)) %>%
+    ggplot(aes(
+               x=log(`GDP per capita (constant 2010 US$)`), 
+               y=log(va_per_hectare), 
+               label=countrycode)) +
+    geom_point(aes(color=(regionname == "South Asia"))) +
+    geom_smooth(method='lm') +
+    geom_point(data=. %>% filter(countrycode=="PAK"), shape=21, size=6) +
+    facet_wrap(~year, ncol = 1) +
+    scale_color_few(name = "Region", labels=c("Other", "South Asia")) +
+    theme_few() + 
+    labs(
+         title = "Comparing Agricultural Value Added per Hectare of Arable Land",
+         subtitle = "Pakistan circled",
+         caption = "Source: World Bank"
+    )
+
+```
+
+```{r}
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    filter(countrycode != "MDV") %>%
+    ggplot(aes(x=year, y=va_per_hectare, color=countrycode, label=countrycode)) +
+    geom_line() +
+    geom_text(data =. %>% filter(year == 2016), nudge_x = 2) +
+    theme_few() +
+    theme(legend.position = "none") + 
+    labs(
+         title = "Agriculture Value Added per Hectare of Arable Land",
+         subtitle = "South Asia",
+         y = "Agricultural Value Added (Constant 2010 US$)\n per Hectare of Arable Land",
+         x = "Year"
+    )
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    filter(countrycode != "MDV") %>%
+    filter(year == 2016) %>%
+    ggplot(aes(x=reorder(countrycode, va_per_hectare), y=va_per_hectare)) +
+    geom_bar(stat="identity") +
+    geom_bar(data=. %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = "Agriculture Value Added per Hectare of Arable Land",
+         subtitle = "South Asia",
+         y = "Agricultural Value Added (Constant 2010 US$)\n per Hectare of Arable Land",
+         x = "Country"
+    )
+
+lag_diff <- 16
+decompose_hectare_df <- cc_prod_data_all %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    mutate(
+           prev_arable_land = lag(`Arable Land`, lag_diff),
+           arable_land_change = (`Arable Land` - prev_arable_land)/prev_arable_land,
+
+           prev_va_per_hectare = lag(va_per_hectare, lag_diff),
+           va_per_hectare_growth = (va_per_hectare - prev_va_per_hectare)/prev_va_per_hectare * 100
+    ) %>%
+    ungroup()
+
+decompose_hectare_df %>%
+    filter(regionname == "South Asia") %>%
+    filter(year == 2016) %>%
+    filter(!is.na(va_per_hectare_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, va_per_hectare_growth), y=va_per_hectare_growth)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() + 
+    labs(
+         title = paste("Value Added per Hectare Growth between 2016 and", 2016-lag_diff),
+         x = "Country",
+         y = "% Growth in Value Added per Hectare of Arable Land \n (constant 2010 US$ / ha)"
+    )
+
+decompose_hectare_df %>%
+    filter(regionname == "South Asia") %>%
+    filter(year == 2016) %>%
+    filter(!is.na(va_per_hectare_growth)) %>%
+    ggplot(aes(x=reorder(countrycode, arable_land_change), y=arable_land_change)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() + 
+    labs(
+         title = paste("Growth in Arable Land between 2016 and", 2016-lag_diff),
+         x = "Country",
+         y = "% Growth in Arable Land"
+    )
+
+```
+
+## Next Steps
+
+We have seen that both the value added growth is slower than comparators, and that L is increasing much faster than comparators. 
+
+There is significant room to increase the value added in agriculture. And this may be the problem to fixate on for now. Even with all these extra workers, who maybe cannot find a job in the industrial sector, we cannot boost the value added. Even if an 'average' number of people instead had shifted to work in industry, the value added would be lower compared to other countries. 
+
+We see that Pakistan has the least productive land in South Asia, other than Afghanistan. Is this true at a subnational level as well? Why is it so unproductive? Can we get variation in district-level land productivity? What drives that variation? 
+
+Is Pakistan growing the wrong crops? Maybe the quantity being produced on the land is actually growing over time, but the prices are falling. For some reason, farmers are not switching to better crops. Todo: rule out a price effect so that we can focus on quantity questions.
+
+Are people using the wrong mix of inputs, driving lower quantities? Can we see this at a macro level?
+
+Are intermediate costs rising for some reason, far more than in other countries? What are the intermediate costs? How does FAO / the world bank take them out?
+
+Other notes: 
+
+According to this data, there are almost 2x as many women working in agriculture than men. I am curious what this actually means - do they only do particular jobs, work on particular crops? Maybe interventions need to target increasing the productivity of women in Agriculture. 
