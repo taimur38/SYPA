@@ -29,31 +29,60 @@ values_global   <- read_csv("data/values-global.csv")
 
 production_all  <- read_csv("data/production-crops-all-normalized.csv") # this makes yields and volumes all redundant
 
+country_codes <- read_csv("data/wikipedia-iso-country-codes.csv")
+
+cc_map <- country_codes %>%
+    select(`Alpha-3 code`, `English short name lower case`, `Numeric code`)
+
 production_global <- production_all %>% 
-    select(Year, Area, `Item Code`, Item, Element, Unit, Value) %>%
+    select(Year, Area, `Area Code (M49)`, `Item Code`, Item, Element, Unit, Value) %>%
     filter(Unit %in% c("ha", "hg/ha", "tonnes"))
 
 values_global_minimal <- values_global %>%
-    select(Year, Area, `Item Code` = `Item Code (FAO)`, Item, Element, Unit, Value)
+    select(Year, `Area Code (M49)`, Area, `Item Code` = `Item Code (FAO)`, Item, Element, Unit, Value)
 
-global_agri_data <- rbind(production_global, values_global_minimal)
+global_agri_data <- rbind(production_global, values_global_minimal) %>%
+    mutate(
+           `Area Code` = str_replace(`Area Code (M49)`, "'", "")
+    ) %>%
+    select(-`Area Code (M49)`) %>%
+    left_join(cc_map, by=c("Area Code" = "Numeric code")) %>%
+    rename(
+           "countrycode" = "Alpha-3 code",
+           "year" = "Year"
+    ) %>%
+    select(-"English short name lower case")
+
 global_agri_wide <- global_agri_data %>%
     select(-Unit) %>%
-    filter(Year >= 1991) %>%
+    filter(year >= 1991) %>%
     pivot_wider(names_from="Element", values_from="Value") %>%
     rename(`Gross Production Value` = `Gross Production Value (constant 2014-2016 thousand US$)`) %>%
     mutate(
-           econ_yield = `Gross Production Value` / `Area harvested`
+           `Gross Production Value` = `Gross Production Value` * 1000,
+           econ_yield = `Gross Production Value` / `Area harvested`,
+           price = `Gross Production Value` / Production
     )
+
+# TODO: better list of comparators
+# comparators <- (df_full %>% 
+#     filter(regionname == "South Asia") %>% 
+#     filter(countrycode != "MDV") %>%
+#     select(countrycode) %>% 
+#     unique())$countrycode
+
+comparators <- c("PAK", "AFG", "BGD", "BTN", "IND", "LKA", "NPL") 
+                 # "VNM", "EGY", "IDN", "MAR", "MMR", "PHL")
+
 ```
 
 ## Metrics Used
 
-We use the following indicators to generate our metrics:
+We use the following indicators to generate our metrics
 
-\textbf{Value Added in Agriculture, constant 2010 US$}: The net output of the Agriculture sector, including forestry hunting and fishing, after adding up all outputs and subtracting intermediate inputs. It is calculated without making deductions for depreciations of fabricated assets or depletion and degradation of natural resources. 
+\textbf{Value Added in Agriculture, constant 2010 US\$}: The net output of the Agriculture sector, including forestry hunting and fishing, after adding up all outputs and subtracting intermediate inputs. It is calculated without making deductions for depreciations of fabricated assets or depletion and degradation of natural resources. 
 
-\textbf{Employment in Agriculture (% of total employment) (modeled ILO estimate)}: Employment is defined as persons of working age who were engaged in any activity to produce goods or produce services for pay or profit, whether at work during the reference period or not at work due to temporary absence from a job, or to working-time arrangement. The agriculture sector consists of activities in agriculture, hunting, forestry and fishing
+\textbf{Employment in Agriculture (\% of total employment) (modeled ILO estimate)}: Employment is defined as persons of working age who were engaged in any activity to produce goods or produce services for pay or profit, whether at work during the reference period or not at work due to temporary absence from a job, or to working-time arrangement. The agriculture sector consists of activities in agriculture, hunting, forestry and fishing
 
 \textbf{Working Age Population}: Total population between the ages 15 to 64. 
 
@@ -475,7 +504,7 @@ decompose_hectare_df <- cc_prod_data_all %>%
     arrange(year) %>%
     mutate(
            prev_arable_land = lag(`Arable Land`, lag_diff),
-           arable_land_change = (`Arable Land` - prev_arable_land)/prev_arable_land,
+           arable_land_change = (`Arable Land` - prev_arable_land)/prev_arable_land * 100,
 
            prev_va_per_hectare = lag(va_per_hectare, lag_diff),
            va_per_hectare_growth = (va_per_hectare - prev_va_per_hectare)/prev_va_per_hectare * 100
@@ -491,7 +520,8 @@ decompose_hectare_df %>%
     geom_bar(data = . %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
     theme_few() + 
     labs(
-         title = paste("Value Added per Hectare Growth between 2016 and", 2016-lag_diff),
+         title = paste("Value Added per Hectare"),
+         subtitle = paste("Growth between 2016 and", 2016-lag_diff),
          x = "Country",
          y = "% Growth in Value Added per Hectare of Arable Land \n (constant 2010 US$ / ha)"
     )
@@ -529,3 +559,499 @@ Are intermediate costs rising for some reason, far more than in other countries?
 Other notes: 
 
 According to this data, there are almost 2x as many women working in agriculture than men. I am curious what this actually means - do they only do particular jobs, work on particular crops? Maybe interventions need to target increasing the productivity of women in Agriculture. 
+
+
+## Gross Crop Production Patterns
+
+```{r}
+
+lag_diff <- 16 # so that we get 2016 vs 2000
+gross_vs_va <- global_agri_data %>%
+    filter(Element == "Gross Production Value (constant 2014-2016 thousand US$)") %>%
+    group_by(countrycode, year) %>%
+    summarise(
+              gross_production_1416_usd = sum(Value * 1000)
+    ) %>%
+    right_join(cc_prod_data_all, by=c("countrycode", "year")) %>%
+    group_by(countrycode) %>%
+    arrange(year) %>%
+    mutate(
+           gross_prod_per_ha = gross_production_1416_usd / `Arable Land`,
+
+           prev_gross_prod = lag(gross_production_1416_usd, lag_diff),
+           prev_gross_prod_per_ha = lag(gross_prod_per_ha, lag_diff),
+
+           gross_prod_growth = (gross_production_1416_usd - prev_gross_prod)/prev_gross_prod * 100,
+           gross_prod_per_ha_growth = (gross_prod_per_ha - prev_gross_prod_per_ha)/prev_gross_prod_per_ha * 100
+    ) %>%
+    ungroup()
+
+gross_vs_va %>%
+    filter(regionname == "South Asia") %>%
+    filter(year == 2016) %>%
+    ggplot(aes(x=reorder(countrycode, gross_prod_growth), y=gross_prod_growth)) +
+    geom_bar(stat="identity") +
+    geom_bar(data= . %>% filter(countrycode == "PAK"), fill="orange", stat="identity")+ 
+    theme_few() +
+    labs(
+         title = "% Growth of Gross Crop Production (constant 2014-2016 US$)",
+         subtitle = "South Asia, 2000-2016",
+         x = "Country",
+         y = "% Growth of Gross Production Value of Crops"
+    )
+
+names(gross_vs_va)
+# we have gross production per acre of land. 
+# how much of gross production is because of kg difference in a crop 
+# how much because of price difference?
+# this will have to be done by crop...
+
+gross_vs_va %>%
+    filter(regionname == "South Asia") %>%
+    filter(year == 2016) %>%
+    ggplot(aes(x=reorder(countrycode, gross_prod_per_ha), y=gross_prod_per_ha)) +
+    geom_bar(stat="identity") +
+    geom_bar(data= . %>% filter(countrycode == "PAK"), fill="orange", stat="identity")+ 
+    theme_few() +
+    labs(
+         title = "Gross Crop Production (2014-2016 constant USD)\nper Hectare of Arable Land",
+         subtitle = "South Asia, 2016",
+         x = "Country",
+         y = "Gross Production Value (constant 2014-2016 USD) of Crops \n per Hectare of Arable Land"
+    )
+
+gross_vs_va %>%
+    filter(regionname == "South Asia") %>%
+    filter(year == 2016) %>%
+    ggplot(aes(x=reorder(countrycode, gross_prod_per_ha_growth), y=gross_prod_per_ha_growth)) +
+    geom_bar(stat="identity") +
+    geom_bar(data= . %>% filter(countrycode == "PAK"), fill="orange", stat="identity")+ 
+    theme_few() +
+    labs(
+         title = "% Growth of Gross Crop Production per Hectare of Arable Land",
+         subtitle = "South Asia, 2000-2016",
+         x = "Country",
+         y = "% Growth of Gross Production Value of Crops \n per Hectare of Arable Land"
+    )
+
+```
+
+The crop data confirms that just looking at crop production, Pakistan is low gross output for its level of arable land. Growth is also not great. 
+
+Now, we can start to look at per crop, the land allocated to it, and the money squeezed out. We should look at things like the concentration of crops in each. The top n crops for Pakistan, how has their production per hectare changed over this time period? How does that relate to others in South Asia?
+
+For each crop, how much of the growth was driven by price changes? Each crop has gross production, change in land, change in price. 
+
+```{r fig.width=10, fig.height=10}
+
+# main crops by production value for south asian countries?
+
+global_crop_shares <- global_agri_wide %>%
+    filter(!is.na(`Area harvested`)) %>%
+    filter(!is.na(`Gross Production Value`)) %>%
+    group_by(countrycode, year) %>%
+    arrange(-`Gross Production Value`) %>%
+    mutate(
+           prod_share = `Gross Production Value` / sum(`Gross Production Value`),
+           area_share = `Area harvested` / sum(`Area harvested`)
+    ) %>%
+    ungroup()
+
+global_crop_shares %>%
+    filter(year == base_year) %>%
+    filter(countrycode == "PAK") %>%
+    arrange(-prod_share) %>%
+    mutate(
+           position = row_number() 
+    ) %>%
+    filter(prod_share > 0.002) %>%
+    select(countrycode, Item, position, area_share, prod_share) %>%
+    pivot_longer(-c("countrycode", "Item", "position")) %>%
+    ggplot(aes(x=reorder(Item, position), y=value, fill=name)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    labs(
+         title = "Area and Production share for crops in Pakistan",
+         subtitle = paste("Year:", base_year),
+         caption = "Source: FAOSTAT",
+         x = "Crop",
+         y = "Share of Total"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9))
+
+```
+
+
+```{r fig.width=10}
+
+# price vs kg changes per crop in Pakistan
+
+lag_diff <- 19 # to get 2019 - 2000 comparison
+
+global_crop_changes <- global_crop_shares %>%
+    group_by(countrycode, Item) %>%
+    arrange(year) %>%
+    mutate(
+           prev_area = lag(`Area harvested`, lag_diff),
+           prev_yield = lag(Yield, lag_diff),
+           prev_prod = lag(Production, lag_diff),
+           prev_prod_val = lag(`Gross Production Value`, lag_diff),
+           prev_prod_share = lag(prod_share, lag_diff),
+           prev_area_share = lag(area_share, lag_diff),
+           prev_price = lag(price, lag_diff),
+           prev_econ_yield = lag(econ_yield, lag_diff),
+
+           prod_growth = (Production - prev_prod)/prev_prod * 100,
+           prod_val_growth = (`Gross Production Value` - prev_prod_val)/prev_prod_val * 100,
+           area_growth = (`Area harvested` - prev_area) / prev_area * 100,
+           prod_share_growth = (prod_share - prev_prod_share)/prev_prod_share * 100,
+           area_share_growth = (area_share - prev_area_share)/prev_area_share * 100,
+           price_growth = (price - prev_price)/prev_price * 100,
+           yield_growth = (Yield - prev_yield)/prev_yield * 100,
+           econ_yield_growth = (econ_yield - prev_econ_yield) / prev_econ_yield * 100
+    )
+
+global_crop_changes %>%
+    filter(countrycode == "PAK") %>%
+    filter(year == base_year) %>%
+    pivot_longer(c("price_growth", "prod_growth")) %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=reorder(Item, -area_share), y=value, fill=name)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9))
+
+global_crop_changes %>%
+    filter(countrycode == "PAK") %>%
+    filter(year == base_year) %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=reorder(Item, -area_growth), y=area_growth)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+    labs(
+         title = "Growth in Area Harvested per Crop",
+         subtitle = paste("Between", base_year - lag_diff, "and", base_year),
+         x = "Item",
+         y = "% Growth"
+    )
+
+global_crop_changes %>%
+    filter(countrycode == "PAK") %>%
+    filter(year == base_year) %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=reorder(Item, -prod_growth), y=prod_growth)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+    labs(
+         title = "Growth in Production per Crop (KG)",
+         subtitle = paste("Between", base_year - lag_diff, "and", base_year),
+         x = "Item",
+         y = "% Growth"
+    )
+
+global_crop_changes %>%
+    filter(countrycode == "PAK") %>%
+    filter(year == base_year) %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=reorder(Item, -yield_growth), y=yield_growth)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+    labs(
+         title = "Growth in Yield per Crop (KG/Ha)",
+         subtitle = paste("Between", base_year - lag_diff, "and", base_year),
+         x = "Item",
+         y = "% Growth"
+    )
+
+global_crop_changes %>%
+    filter(countrycode == "PAK") %>%
+    filter(year == base_year) %>%
+    mutate( price_change = abs(price_growth)) %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=reorder(Item, -price_change), y=price_growth)) +
+    geom_bar(stat="identity") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+    labs(
+         title = "Price changes for crops in Pakistan",
+         y = "Price Growth (%)",
+         x = "Item"
+    )
+# in the crops which make up the major share of production
+# how has value changed with price 
+```
+
+```{r fig.height=10, fig.width=10}
+
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(year == base_year) %>%
+    group_by(countrycode) %>%
+    arrange(-prev_prod_share) %>%
+    mutate(position = row_number()) %>%
+    ungroup() %>%
+    mutate(Item = str_trunc(Item, 10)) %>%
+    ggplot(aes(x=position, y=yield_growth, fill=prod_share)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    scale_fill_viridis_b() +
+    facet_wrap(~countrycode) +
+    theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+    labs(
+         title = "Growth in Yield per Crop (KG/Ha)",
+         subtitle = paste("Between", base_year - lag_diff, "and", base_year),
+         x = "Rank of how important this crop used to be",
+         y = "% Growth"
+    )
+
+```
+
+```{r}
+
+# I want first, biggest change in prod share 
+
+crop_changes_table <- global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(year == base_year) %>%
+    group_by(countrycode) %>%
+    arrange(-prod_share) %>%
+    mutate(position = row_number()) %>%
+    ungroup() %>%
+    group_by(Item) %>%
+    mutate(
+           avg_yield_growth = median(yield_growth, na.rm = T),
+           avg_price = median(price),
+           rel_price = price / avg_price
+    ) %>%
+    ungroup() %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.01) %>%
+    arrange(-prod_share_growth) %>%
+    mutate(
+           prod_share = prod_share * 100,
+           area_share = area_share * 100 
+    )
+
+crop_changes_table %>%
+    select(
+           Item, 
+           "Production Ranking"=position,
+           "Prod Share"=prod_share,
+           "Area Share"=area_share, 
+           "Prod Share Growth"=prod_share_growth, 
+           "Area Share Growth"=area_share_growth, 
+           "Yield Growth"=yield_growth,
+           "Avg Yield Growth" = avg_yield_growth,
+           "Rel Price" = rel_price,
+           "Econ Yield Growth"=econ_yield_growth,
+           "Prod Growth"=prod_val_growth,
+           "Area Growth"=area_growth
+    ) %>% 
+    kable(digits = 1)
+
+```
+
+Lets look at prices of crops relative to others.
+
+```{r fig.height=10, fig.width=10}
+
+# no variation in time really. ok to show a time slice
+
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(Item %in% crop_changes_table$Item) %>%
+    filter(year == base_year) %>%
+    ggplot(aes(y=price, x=Item, label=countrycode)) +
+    geom_boxplot() +
+    geom_text(alpha = 0.1) + 
+    geom_point(data = . %>% filter(countrycode == "PAK"), color = "orange") +
+    theme_few() + 
+    facet_wrap(~Item, scales="free") + 
+    labs(
+         title = "Pakistans Place in Price Distribution for Major Crops",
+         subtitle = base_year
+    )
+
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(Item %in% crop_changes_table$Item) %>%
+    filter(year == base_year) %>%
+    ggplot(aes(y=Yield, x=Item, label=countrycode)) +
+    geom_boxplot() +
+    geom_text(alpha = 0.1) + 
+    geom_point(data = . %>% filter(countrycode == "PAK"), color = "orange") +
+    theme_few() + 
+    facet_wrap(~Item, scales="free") + 
+    labs(
+         title = "Pakistans Place in Yield Distribution for Major Crops",
+         subtitle = base_year
+    )
+
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(year == base_year) %>%
+    group_by(Item) %>%
+    mutate(
+           rel_yield = Yield / mean(Yield, na.rm = T),
+           rel_price = price / mean(price, na.rm = T)
+    ) %>%
+    ungroup() %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.005) %>%
+    ggplot(aes(x=rel_price, y=rel_yield, color=`prod_share`)) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_point(aes(size=`Area harvested`)) +
+    geom_text(aes(label=Item), nudge_y = -0.015) +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Relative Price",
+         subtitle = "Pakistan Comparison vs Comparator countries",
+         y = "Yield Relative to Mean Yield",
+         x = "Price Relative to Mean Price"
+    )
+
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(year == base_year) %>%
+    group_by(Item) %>%
+    mutate(
+           rel_yield = Yield / median(Yield, na.rm = T),
+           rel_price = price / median(price, na.rm = T)
+    ) %>%
+    ungroup() %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.005) %>%
+    ggplot(aes(x=rel_price, y=rel_yield, color=`prod_share`)) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_point(aes(size=`Area harvested`)) +
+    geom_text(aes(label=Item), nudge_y = -0.015) +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Relative Price",
+         subtitle = "Pakistan Comparison vs Comparator countries",
+         y = "Yield Relative to Median Yield",
+         x = "Price Relative to Median Price"
+    )
+
+# shows path over time 
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    filter(year > 2000) %>%
+    # filter(Item %in% crop_changes_table$Item) %>%
+    group_by(year, Item) %>%
+    mutate(
+           rel_yield = Yield / median(Yield, na.rm = T),
+           rel_price = price / median(price, na.rm = T)
+    ) %>%
+    ungroup() %>%
+    arrange(year) %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.01) %>%
+    ggplot(aes(x=rel_price, y=rel_yield, color=`prod_share`)) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_point(data = . %>% filter(year == base_year), aes(size=`Area harvested`)) +
+    geom_text(data = . %>% filter(year == base_year), aes(label=str_trunc(Item, 10)), nudge_y = -0.015, nudge_x = 0.025) +
+    geom_path(data = . %>% filter(rel_price < 1.5), aes(group = Item), alpha = 0.5) +
+    geom_text(data = . %>% filter(rel_price < 1.5), aes(label=year), alpha = 0.2) +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Relative Price",
+         subtitle = "Comparison vs Comparator countries",
+         y = "Yield Relative to Median Yield",
+         x = "Price Relative to Median Price"
+    )
+
+# vs world
+global_crop_changes %>%
+    filter(year == base_year) %>%
+    group_by(Item) %>%
+    mutate(
+           rel_yield = Yield / median(Yield, na.rm = T),
+           rel_price = price / median(price, na.rm = T)
+    ) %>%
+    ungroup() %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.005) %>%
+    ggplot(aes(x=rel_price, y=rel_yield, color=`prod_share`)) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_point(aes(size=`Area harvested`)) +
+    geom_text(aes(label=Item), nudge_y = -0.015) +
+    theme_few() + 
+    labs(
+         title = "Relative Yield vs Relative Price",
+         subtitle = "Comparison vs World",
+         y = "Yield Relative to Median Yield",
+         x = "Price Relative to Median Price"
+    )
+
+```
+
+
+
+
+# Appendix
+
+Below I got curious about the relationship between concentration in crops
+
+```{r fig.width=10, fig.height=10}
+# theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+# reorder(Item, position)
+global_crop_shares %>%
+    filter(year == base_year) %>%
+    group_by(countrycode) %>%
+    arrange(-prod_share) %>%
+    mutate(
+           position = row_number() 
+    ) %>%
+    filter(countrycode %in% comparators) %>%
+    filter(prod_share > 0.01) %>%
+    select(countrycode, Item, position, area_share, prod_share) %>%
+    pivot_longer(-c("countrycode", "Item", "position")) %>%
+    ggplot(aes(x=position, y=value, fill=name)) +
+    geom_bar(stat="identity", position="dodge") +
+    theme_few() +
+    labs(
+         title = "Area and Production share for crops in South Asia",
+         subtitle = paste("Year:", base_year),
+         caption = "Source: FAOSTAT"
+    ) +
+    facet_wrap(~countrycode)
+
+global_crop_concentrations <- global_crop_shares %>%
+    group_by(countrycode, year) %>%
+    summarise(
+              area_concentration = sum((area_share*100)^2),
+              prod_concentration = sum((prod_share*100)^2)
+              # mismatches = sum((area_share - prod_share)^2)
+    ) %>%
+    ungroup()
+
+global_crop_concentrations %>%
+    filter(countrycode %in% comparators) %>%
+    pivot_longer(-c(year, countrycode)) %>%
+    ggplot(aes(x=year, y=value, color=name)) +
+    geom_line() +
+    theme_few() + 
+    facet_wrap(~countrycode, scales = "free_y" ) +
+    labs(
+         title = "South Asian Crop and Area concentration over Time",
+         y = "HHI",
+         x = "Year"
+    )
+
+# global_crop_concentrations %>%
+#     left_join(cc_prod_data_all) %>%
+#     filter(year == base_year) %>%
+#     ggplot(aes(x=log(`GDP per capita (constant 2010 US$)`), y=mismatches, label=countrycode)) +
+#     geom_text() +
+#     theme_few()
+
+```
+
