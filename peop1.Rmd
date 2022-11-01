@@ -1,0 +1,466 @@
+---
+
+title: "PEOP Data"
+
+output:
+    pdf_document: 
+        includes: 
+            in_header: "preamble.tex"
+    html_document: default
+---
+
+```{r, echo=FALSE, message=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+library(tidyverse)
+library(patchwork)
+library(ggthemes)
+library(knitr)
+library(broom)
+library(haven)
+library(stargazer)
+library(lfe)
+
+#--- check 2016 data 
+
+
+root_2016 <- "data/bpre/Data/Household/Baseline 2016/clean/"
+
+root_2019 <- "data/bpre/Data/Household/Endline 2019/clean/initial EL data/Male/"
+
+b_sec0_dat <- read_stata(paste0(root_2016, "Combined_Sec0_1.dta")) # basic
+# b_sec25_dat <- read_stata(paste0(root_2016, "Combined_Sec2_5.dta")) # borrowing
+b_sec31_dat <- read_stata(paste0(root_2016, "Combined_Sec3_1.dta")) # land  
+b_sec32_dat <- read_stata(paste0(root_2016, "Combined_Sec3_2A.dta")) # land  
+
+b_sec34A_dat <- read_stata(paste0(root_2016, "Combined_Sec3_4A.dta")) # non-veg 
+b_sec34B_dat <- read_stata(paste0(root_2016, "Combined_Sec3_4B.dta")) # veg
+
+b_sec35A_dat <- read_stata(paste0(root_2016, "Combined_Sec3_5A.dta")) # non-veg sales
+b_sec35B_dat <- read_stata(paste0(root_2016, "Combined_Sec3_5B.dta")) # veg sales
+
+b_sec36_dat <- read_stata(paste0(root_2016, "Combined_Sec3_6.dta")) # agri inputs
+b_sec37_dat <- read_stata(paste0(root_2016, "Combined_Sec3_7.dta")) # water use
+b_sec38_dat <- read_stata(paste0(root_2016, "Combined_Sec3_8.dta")) # crop knowledge 
+
+b_sec7G_dat <- read_stata(paste0(root_2016, "Combined_Sec7G.dta")) # exposure
+
+
+non_veg_merged_2016 <- b_sec0_dat %>%
+    left_join(b_sec31_dat) %>%
+    left_join(b_sec32_dat) %>%
+    left_join(b_sec34A_dat) %>% # need to thnk about this separately
+    left_join(b_sec36_dat) %>%
+    left_join(b_sec37_dat) %>%
+    left_join(b_sec38_dat) %>%
+    left_join(b_sec7G_dat) 
+
+veg_merged_2016 <- b_sec0_dat %>%
+    left_join(b_sec31_dat) %>%
+    left_join(b_sec32_dat) %>%
+    left_join(b_sec34B_dat) %>% # need to thnk about this separately
+    left_join(b_sec36_dat) %>%
+    left_join(b_sec37_dat) %>%
+    left_join(b_sec38_dat) %>%
+    left_join(b_sec7G_dat) 
+
+c_sec0_dat <- read_stata(paste0(root_2019, "EL_Sec0_M_clean.dta"))
+c_sec31_dat <- read_stata(paste0(root_2019, "EL_Sec3_11A_M_clean.dta"))
+
+c_sec32_dat <- read_stata(paste0(root_2019, "EL_Sec3_2_M_clean.dta"))
+c_sec33_dat <- read_stata(paste0(root_2019, "EL_Sec3_3_M_clean.dta"))
+c_sec34A_dat <- read_stata(paste0(root_2019, "EL_Sec3_4A_M_clean.dta"))
+c_sec34B_dat <- read_stata(paste0(root_2019, "EL_Sec3_4B_M_clean.dta"))
+c_sec35A_dat <- read_stata(paste0(root_2019, "EL_Sec3_5A_M_clean.dta"))
+c_sec35B_dat <- read_stata(paste0(root_2019, "EL_Sec3_5B_M_clean.dta"))
+c_sec36_dat <- read_stata(paste0(root_2019, "EL_Sec3_6_M_clean.dta"))
+c_sec37_dat <- read_stata(paste0(root_2019, "EL_Sec3_7_M_clean.dta"))
+
+c_sec36_dat <- c_sec36_dat %>%
+    replace_na(
+               list(
+                    fmly_wrkr_numb = 0,
+                    hired_wrkr_numb = 0,
+                    area_tractor = 0,
+                    area_harvester = 0,
+                    area_landlevel = 0,
+                    kg_fert_acrea = 0,
+                    kg_fert_acreb = 0,
+                    kg_fert_acrec = 0
+                )
+    )
+
+non_veg_merged_2019 <- c_sec0_dat %>%
+    left_join(c_sec31_dat) %>%
+    left_join(c_sec32_dat) %>%
+    left_join(c_sec33_dat) %>%
+    left_join(c_sec34A_dat) %>%
+    left_join(c_sec36_dat) %>%
+    left_join(c_sec37_dat) %>%
+    mutate(
+           crop_type = ifelse(crop_type %in% c("CORNS", "MAKAYE", "MAKAI", "CORN"), "CORN", crop_type),
+    ) 
+
+
+kanal_to_acre = 0.125
+acre_to_hectare = 0.404686
+maund_to_kg = 37.3242
+
+```
+
+We have a questionaire and are looking at basic info (district, tehsil, psu, settlement name, neighborhod and hh id), as well as their assets, consumption, and crop sales.
+
+Resisting the other datasets for now. 
+
+
+```{r}
+
+# question 1 - how much land was worked, total?
+# how much land per crop? 
+
+# what if we focus on corn, wheat, rice, cotton, sugar cane, potatoes
+
+non_veg_merged_2016 %>%
+    filter(land_cultvd > 0) %>%
+    select(hh_id, crop_type, land_cultvd, qty_prod) %>%
+    mutate(
+           land_cultvd = land_cultvd * kanal_to_acre * acre_to_hectare,
+           qty_prod = qty_prod * maund_to_kg,
+           yield = qty_prod / land_cultvd,
+    ) %>%
+    filter(crop_type == "Wheat") %>%
+    arrange(-yield)
+
+
+
+nv_land_worked_2016 <- non_veg_merged_2016 %>%
+    filter(land_cultvd > 0) %>%
+    group_by(hh_id) %>%
+    summarise(
+            land_worked_acre = sum(land_cultvd) * kanal_to_acre
+    )
+
+nv_land_yield_2016 <- non_veg_merged_2016 %>%
+    filter(land_cultvd > 0) %>%
+    left_join(nv_land_worked_2016) %>%
+    select(crop_type, land_cultvd, qty_prod, land_worked_acre) %>%
+    mutate(
+           land_bin = cut(land_worked_acre, c(0, 2.5, 12.5, 100, Inf))
+    ) %>%
+    group_by(crop_type, land_bin) %>%
+    summarise(
+              hh = n(),
+              land = sum(land_cultvd) * kanal_to_acre * acre_to_hectare,
+              qty = sum(qty_prod) * maund_to_kg,
+              yield = qty / land 
+    ) 
+
+nv_land_yield_2016  %>%
+    arrange(crop_type, land_bin) %>%
+    kable(digits = 3)
+```
+
+```{r fig.height=10, fig.width=10}
+
+
+g1 <- nv_land_yield_2016 %>%
+    group_by(crop_type) %>%
+    mutate(
+           land_share = land / sum(land),
+           qty_share = qty / sum(qty),
+           hh_share = hh / sum(hh)
+    ) %>%
+    arrange(yield) %>%
+    mutate(
+           qty_position = cumsum(qty_share) - qty_share,
+           land_position = cumsum(land_share) - land_share,
+           hh_position = cumsum(hh_share) - hh_share
+    ) %>%
+    ungroup() %>%
+    filter(crop_type %in% c("CORN", "Cotton", "RICE", "Wheat")) %>%
+    ggplot(aes(
+               xmin = land_position * 100,
+               xmax = ((land_position + land_share)*100),
+               ymin = 0,
+               ymax = yield,
+               fill = land_bin
+    )) +
+    geom_rect() +
+    geom_text(aes(label = hh, x = (land_position + land_share/2) * 100, y = yield)) +
+    theme_few() + 
+    facet_wrap(~crop_type, scales="free_y") + 
+    labs(
+         y = "Yield (kg / ha)",
+         x = "Percent of Qty",
+         title = "Changes in Yield by Type of Farm",
+         subtitle = "2016"
+    )
+
+g1
+
+```
+
+Lets recreate for vegetables 
+
+```{r}
+
+v_land_yield <- veg_merged_2016 %>%
+    filter(land > 0) %>%
+    select(veg_name, land, qty_prod) %>%
+    mutate(
+           land_bin = cut(land, c(0, 2.5, 12.5, 100, Inf)),
+           veg_name = str_to_lower(veg_name)
+    ) %>%
+    group_by(veg_name, land_bin) %>%
+    summarise(
+              hh = n(),
+              land = sum(land) * kanal_to_acre * acre_to_hectare,
+              qty = sum(qty_prod) * maund_to_kg,
+              yield = qty / land 
+    ) 
+
+v_land_yield %>%
+    group_by(veg_name) %>%
+    mutate(
+           land_share = land / sum(land),
+           qty_share = qty / sum(qty),
+           hh_share = hh / sum(hh)
+    ) %>%
+    arrange(yield) %>%
+    mutate(
+           qty_position = cumsum(qty_share) - qty_share,
+           land_position = cumsum(land_share) - land_share,
+           hh_position = cumsum(hh_share) - hh_share
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(
+               xmin = land_position * 100,
+               xmax = ((land_position + land_share)*100),
+               ymin = 0,
+               ymax = yield,
+               fill = land_bin
+    )) +
+    geom_rect() +
+    geom_text(aes(label = hh, x = (land_position + land_share/2) * 100, y = yield)) +
+    theme_few() + 
+    facet_wrap(~veg_name, scales="free_y") + 
+    labs(
+         y = "Yield (kg / ha)",
+         x = "Percent of Qty",
+         title = "Changes in Yield by Type of Farm"
+    )
+
+```
+
+Lets look at 2019 data
+
+```{r}
+
+nv_land_worked_2019 <- non_veg_merged_2019 %>%
+    filter(land_cultvd > 0) %>%
+    group_by(hh_id) %>%
+    summarise(
+            land_worked_acre = sum(land_cultvd) * kanal_to_acre
+    )
+
+nv_land_yield_2019 <- non_veg_merged_2019 %>%
+    filter(land_cultvd > 0) %>%
+    left_join(nv_land_worked_2019) %>%
+    select(crop_type, land_cultvd, qty_prod, land_worked_acre) %>%
+    mutate(
+           land_bin = cut(land_worked_acre, c(0, 2.5, 12.5, 100, Inf))
+    ) %>%
+    group_by(crop_type, land_bin) %>%
+    summarise(
+              hh = n(),
+              land = sum(land_cultvd) * kanal_to_acre * acre_to_hectare,
+              qty = sum(qty_prod) * maund_to_kg,
+              yield = qty / land 
+    ) 
+
+nv_land_yield_2019  %>%
+    arrange(crop_type, land_bin) %>%
+    kable(digits = 3)
+```
+
+```{r fig.height=10, fig.width=10}
+
+
+g2 <- nv_land_yield_2019 %>%
+    group_by(crop_type) %>%
+    mutate(
+           land_share = land / sum(land),
+           qty_share = qty / sum(qty),
+           hh_share = hh / sum(hh)
+    ) %>%
+    arrange(yield) %>%
+    mutate(
+           qty_position = cumsum(qty_share) - qty_share,
+           land_position = cumsum(land_share) - land_share,
+           hh_position = cumsum(hh_share) - hh_share
+    ) %>%
+    ungroup() %>%
+    filter(crop_type %in% c("CORN", "Cotton", "RICE", "Wheat")) %>%
+    ggplot(aes(
+               xmin = land_position * 100,
+               xmax = ((land_position + land_share)*100),
+               ymin = 0,
+               ymax = yield,
+               fill = land_bin
+    )) +
+    geom_rect() +
+    geom_text(aes(label = hh, x = (land_position + land_share/2) * 100, y = yield)) +
+    theme_few() + 
+    facet_wrap(~crop_type, scales="free_y") + 
+    labs(
+         y = "Yield (kg / ha)",
+         x = "Percent of Qty",
+         title = "Changes in Yield by Type of Farm",
+         subtitle = "2019"
+    )
+
+g2 
+
+```
+
+
+```{r fig.height=14, fig.width = 10}
+
+
+g1 / g2
+
+```
+
+Lets focus on 2019 and things that can tell us about where productivity differences come from. 
+
+```{r}
+
+crop_list <- c("CORN", "Cotton", "Wheat", "RICE", "SUGARCANE")
+
+# non_veg_merged_2019 %>% group_by(crop_type) %>% summarise(hhs = n()) %>% filter(hhs > 10) %>% arrange(hhs) %>% kable()
+
+crop_dat <- non_veg_merged_2019 %>%
+    filter(crop_type %in% crop_list) %>%
+    left_join(nv_land_worked_2019) %>%
+    mutate(
+           rel_area_tractor = area_tractor / land_cultvd,
+           rel_area_landlevel = area_landlevel / land_cultvd,
+           rel_area_harvester = area_harvester / land_cultvd
+    ) %>%
+    as_factor()
+
+
+rice_dat <- filter(crop_dat, crop_type == "RICE") %>% filter(yield > 0)
+rice_qtile <- rice_dat$yield %>% quantile(c(0.01, 0.99))
+
+rice_dat <- rice_dat %>% 
+    filter(between(yield, 
+                   rice_qtile[["1%"]], 
+                   rice_qtile[["99%"]])
+    )
+
+wheat_dat <- filter(crop_dat, crop_type == "Wheat") %>% filter(yield > 0)
+wheat_qtile <- wheat_dat$yield %>% quantile(c(0.01, 0.99))
+
+wheat_dat <- wheat_dat %>% 
+    filter(between(yield, 
+                   wheat_qtile[["1%"]], 
+                   wheat_qtile[["99%"]])
+    )
+
+corn_dat <- filter(crop_dat, crop_type == "CORN")  %>% filter(yield > 0)
+corn_qtile <- corn_dat$yield %>% quantile(c(0.05, 0.95))
+
+corn_dat <- corn_dat %>% 
+    filter(between(yield, 
+                   corn_qtile[["5%"]], 
+                   corn_qtile[["95%"]])
+    )
+
+cotton_dat <- filter(crop_dat, crop_type == "Cotton") %>% filter(yield > 0)
+cotton_qtile <- cotton_dat$yield %>% quantile(c(0.01, 0.99))
+
+cotton_dat <- cotton_dat %>% 
+    filter(between(yield, 
+                   cotton_qtile[["1%"]], 
+                   cotton_qtile[["99%"]])
+    )
+
+# corn_dat %>% 
+#     select(
+#            soil_qual, land_fert_type, soil_fert_rank, land_steep_type, access_canal_water, access_tubewell, 
+#     land_suffer_waterlog, land_suffer_salinity, land_suffer_erosion, D_more_fert_qty, soil_cmprd_others
+#     ) %>%
+#     summary() 
+
+
+
+reg_formula <- yield ~ land_worked_acre +
+                    land_cultvd + 
+                    fmly_wrkr_numb +
+                    hired_wrkr_numb +
+                    seed_acreB +
+                    seed_acreC +
+                    kg_fert_acrea +
+                    kg_fert_acreb +
+                    kg_fert_acrec + 
+
+
+                    rel_area_tractor + 
+                    rel_area_landlevel +
+                    rel_area_harvester +
+                    D_orgnc_mnre +
+                    D_micro_ntrnts +
+                    irr_methd + 
+
+                    soil_qual + 
+                    land_fert_type + 
+                    soil_fert_rank + 
+                    land_steep_type + 
+                    access_canal_water + 
+                    access_tubewell + 
+                    land_suffer_waterlog + 
+                    land_suffer_salinity + 
+                    land_suffer_erosion + 
+                    D_more_fert_qty + 
+                    soil_cmprd_others
+                
+
+corn_reg <- felm(reg_formula, corn_dat)
+wheat_reg <- felm(reg_formula, wheat_dat)
+rice_reg <- felm(reg_formula, rice_dat)
+cotton_reg <- felm(reg_formula, cotton_dat)
+
+# stargazer(corn_reg, wheat_reg, rice_reg, cotton_reg,
+#           column.labels=c("Corn", "Wheat", "Rice", "Cotton"),
+#           # covariate.labels = c(
+#           #                      "Total Land worked by farm",
+#           #                      "Land cultivated for crop",
+#           #                      "Total Family Workers",
+#           #                      "Total Hired Workers",
+#           #                      "Land Leveler Access",
+#           #                      "Harvester Access"
+#           #                      # "Furrow Irrigation",
+#           #                      # "Bed and Furrow Irrigation",
+#           #                      # "Other Irrigation"
+#           #                   ),
+#           type = "text",
+#           header=F)
+# 
+
+```
+
+```{r results='asis'}
+
+stargazer(wheat_reg, cotton_reg, rice_reg, corn_reg,
+          column.labels=c("Wheat", "Cotton", "Rice", "Corn"),
+          font.size = "tiny",
+          single.row = TRUE,
+          column.sep.width = "1pt",
+          align = F,
+          header=F)
+
+```
+

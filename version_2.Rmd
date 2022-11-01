@@ -192,7 +192,7 @@ cc_prod_data_all %>%
 n_base_year <- 2000
 target_year <- 2019
 
-growth_dat <- cc_prod_data %>%
+growth_dat <- cc_prod_data_all %>%
     group_by(countrycode) %>%
     arrange(year) %>%
     filter((year == n_base_year) | (year == target_year)) %>%
