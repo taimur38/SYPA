@@ -122,17 +122,17 @@ Resisting the other datasets for now.
 
 # what if we focus on corn, wheat, rice, cotton, sugar cane, potatoes
 
-non_veg_merged_2016 %>%
-    filter(land_cultvd > 0) %>%
-    select(hh_id, crop_type, land_cultvd, qty_prod) %>%
-    mutate(
-           land_cultvd = land_cultvd * kanal_to_acre * acre_to_hectare,
-           qty_prod = qty_prod * maund_to_kg,
-           yield = qty_prod / land_cultvd,
-    ) %>%
-    filter(crop_type == "Wheat") %>%
-    arrange(-yield)
-
+# non_veg_merged_2016 %>%
+#     filter(land_cultvd > 0) %>%
+#     select(hh_id, crop_type, land_cultvd, qty_prod) %>%
+#     mutate(
+#            land_cultvd = land_cultvd * kanal_to_acre * acre_to_hectare,
+#            qty_prod = qty_prod * maund_to_kg,
+#            yield = qty_prod / land_cultvd,
+#     ) %>%
+#     filter(crop_type == "Wheat") %>%
+#     arrange(-yield)
+# 
 
 
 nv_land_worked_2016 <- non_veg_merged_2016 %>%
@@ -157,9 +157,9 @@ nv_land_yield_2016 <- non_veg_merged_2016 %>%
               yield = qty / land 
     ) 
 
-nv_land_yield_2016  %>%
-    arrange(crop_type, land_bin) %>%
-    kable(digits = 3)
+# nv_land_yield_2016  %>%
+#     arrange(crop_type, land_bin) %>%
+#     kable(digits = 3)
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -221,37 +221,37 @@ v_land_yield <- veg_merged_2016 %>%
               yield = qty / land 
     ) 
 
-v_land_yield %>%
-    group_by(veg_name) %>%
-    mutate(
-           land_share = land / sum(land),
-           qty_share = qty / sum(qty),
-           hh_share = hh / sum(hh)
-    ) %>%
-    arrange(yield) %>%
-    mutate(
-           qty_position = cumsum(qty_share) - qty_share,
-           land_position = cumsum(land_share) - land_share,
-           hh_position = cumsum(hh_share) - hh_share
-    ) %>%
-    ungroup() %>%
-    ggplot(aes(
-               xmin = land_position * 100,
-               xmax = ((land_position + land_share)*100),
-               ymin = 0,
-               ymax = yield,
-               fill = land_bin
-    )) +
-    geom_rect() +
-    geom_text(aes(label = hh, x = (land_position + land_share/2) * 100, y = yield)) +
-    theme_few() + 
-    facet_wrap(~veg_name, scales="free_y") + 
-    labs(
-         y = "Yield (kg / ha)",
-         x = "Percent of Qty",
-         title = "Changes in Yield by Type of Farm"
-    )
-
+# v_land_yield %>%
+#     group_by(veg_name) %>%
+#     mutate(
+#            land_share = land / sum(land),
+#            qty_share = qty / sum(qty),
+#            hh_share = hh / sum(hh)
+#     ) %>%
+#     arrange(yield) %>%
+#     mutate(
+#            qty_position = cumsum(qty_share) - qty_share,
+#            land_position = cumsum(land_share) - land_share,
+#            hh_position = cumsum(hh_share) - hh_share
+#     ) %>%
+#     ungroup() %>%
+#     ggplot(aes(
+#                xmin = land_position * 100,
+#                xmax = ((land_position + land_share)*100),
+#                ymin = 0,
+#                ymax = yield,
+#                fill = land_bin
+#     )) +
+#     geom_rect() +
+#     geom_text(aes(label = hh, x = (land_position + land_share/2) * 100, y = yield)) +
+#     theme_few() + 
+#     facet_wrap(~veg_name, scales="free_y") + 
+#     labs(
+#          y = "Yield (kg / ha)",
+#          x = "Percent of Qty",
+#          title = "Changes in Yield by Type of Farm"
+#     )
+# 
 ```
 
 Lets look at 2019 data
@@ -277,12 +277,12 @@ nv_land_yield_2019 <- non_veg_merged_2019 %>%
               hh = n(),
               land = sum(land_cultvd) * kanal_to_acre * acre_to_hectare,
               qty = sum(qty_prod) * maund_to_kg,
-              yield = qty / land 
+              yield = qty / land,
     ) 
 
-nv_land_yield_2019  %>%
-    arrange(crop_type, land_bin) %>%
-    kable(digits = 3)
+# nv_land_yield_2019  %>%
+#     arrange(crop_type, land_bin) %>%
+#     kable(digits = 3)
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -388,6 +388,15 @@ cotton_dat <- cotton_dat %>%
                    cotton_qtile[["99%"]])
     )
 
+sugar_dat <- filter(crop_dat, crop_type == "SUGARCANE") %>% filter(yield > 0)
+sugar_qtile <- sugar_dat$yield %>% quantile(c(0.01, 0.99))
+
+sugar_dat <- sugar_dat %>% 
+    filter(between(yield, 
+                   sugar_qtile[["1%"]], 
+                   sugar_qtile[["99%"]])
+    )
+
 # corn_dat %>% 
 #     select(
 #            soil_qual, land_fert_type, soil_fert_rank, land_steep_type, access_canal_water, access_tubewell, 
@@ -416,7 +425,7 @@ reg_formula <- yield ~ land_worked_acre +
                     irr_methd + 
 
                     soil_qual + 
-                    land_fert_type + 
+                    # land_fert_type + 
                     soil_fert_rank + 
                     land_steep_type + 
                     access_canal_water + 
@@ -432,6 +441,13 @@ corn_reg <- felm(reg_formula, corn_dat)
 wheat_reg <- felm(reg_formula, wheat_dat)
 rice_reg <- felm(reg_formula, rice_dat)
 cotton_reg <- felm(reg_formula, cotton_dat)
+# sugar_reg <- felm(reg_formula, sugar_dat)
+
+ # wheat_dat %>% group_by(access_tubewell, access_canal_water) %>% summarise(c = n())
+# sugar_dat %>% group_by(land_fert_type) %>% summarise(c = n())
+# lapply(sugar_dat[c("soil_qual", "land_fert_type", "land_steep_type", "access_canal_water", "access_tubewell", "land_suffer_waterlog", "land_suffer_salinity", "land_suffer_erosion", "D_more_fert_qty", "irr_methd", "D_micro_ntrnts", "D_orgnc_mnre")], unique)
+
+
 
 # stargazer(corn_reg, wheat_reg, rice_reg, cotton_reg,
 #           column.labels=c("Corn", "Wheat", "Rice", "Cotton"),
@@ -462,5 +478,38 @@ stargazer(wheat_reg, cotton_reg, rice_reg, corn_reg,
           align = F,
           header=F)
 
+```
+
+```{r}
+
+g1 <- wheat_dat %>%
+    ggplot(aes(x=yield)) +
+    geom_histogram() +
+    labs(
+         title = "Wheat Yield Distribution"
+    )
+
+g2 <- cotton_dat %>%
+    ggplot(aes(x=yield)) +
+    geom_histogram() +
+    labs(
+         title = "Cotton Yield Distribution"
+    )
+
+g3 <- rice_dat %>%
+    ggplot(aes(x=yield)) +
+    geom_histogram() +
+    labs(
+         title = "Rice Yield Distribution"
+    )
+
+g4 <- corn_dat %>%
+    ggplot(aes(x=yield)) +
+    geom_histogram() +
+    labs(
+         title = "Corn Yield Distribution"
+    )
+
+g1 + g2 + g3 + g4
 ```
 

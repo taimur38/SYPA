@@ -245,9 +245,9 @@ va_hectare_time / (va_worker_time | growth_worker)
 
 ```
 
-What is causing the low growth in value added? Is it because prices are not rising, or because yields are not rising? An analysis shows us that prices are not changing over time. 
+What is causing the low growth in value added? Is it because prices are not rising, or because yields are not rising? A basic check shows us that prices are not changing over time. Changes in growth are driven by changes in yields.
 
-We can, however, compare the growth in yields for crops which are important to South Asian countries. This analysis shows us that yields in important crops have not improved in Pakistan. 
+We compare the growth in yields for crops which are important to South Asian countries. This analysis shows us that yields in important crops have not improved in Pakistan. 
 
 ```{r fig.height=10, fig.width=10}
 
@@ -274,9 +274,58 @@ global_crop_changes %>%
 
 ```
 
-We can also see where Pakistans important crops lie relative to median yield and price.
+Everything is driven by changes in relative yields. We can observe Pakistans competitiveness in its top crops against the median south asian performance. With few exceptions, we see relative yields declining from 2000 to 2020. 
 
-```{r}
+```{r fig.height=10, fig.width=10}
+global_crop_changes %>%
+    filter(countrycode %in% comparators) %>%
+    group_by(year, Item) %>%
+    mutate(
+           rel_yield = Yield / median(Yield, na.rm = T),
+           rel_price = price / median(price, na.rm = T)
+    ) %>%
+    ungroup() %>%
+    filter(year >= 2000) %>%
+    filter(countrycode == "PAK") %>%
+    filter(prod_share > 0.01) %>%
+    ggplot(aes(x=year, y=rel_yield)) +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_line() +
+    theme_few() + 
+    facet_wrap(~Item, scales="free_y")  +
+    labs(
+         title = "Pakistan Crop Yields over Time Relative to Median South Asian Yield",
+         y = "Relative Yield",
+         x = ""
+    )
+
+# global_crop_changes %>%
+#     group_by(year, Item) %>%
+#     mutate(
+#            rel_yield = Yield / median(Yield, na.rm = T),
+#            rel_price = price / median(price, na.rm = T)
+#     ) %>%
+#     ungroup() %>%
+#     filter(year >= 2000) %>%
+#     filter(countrycode == "PAK") %>%
+#     filter(prod_share > 0.01) %>%
+#     ggplot(aes(x=year, y=rel_yield)) +
+#     geom_hline(yintercept = 1, linetype = "dashed") +
+#     geom_line() +
+#     theme_few() + 
+#     facet_wrap(~Item, scales="free_y")  +
+#     labs(
+#          title = "Pakistan Crop Yields over Time Relative to Median World Yield",
+#          y = "Relative Yield",
+#          x = ""
+#     )
+
+# TODO: can put into one picture
+```
+
+Important exceptions are corn and sugarcane. A look at the relative yields and relative prices tells us a bit more about the positioning of these crops, using price as a proxy for quality. 
+
+```{r fig.height=10, fig.width=11}
 
 global_crop_changes %>%
     filter(countrycode %in% comparators) %>%
@@ -300,33 +349,41 @@ global_crop_changes %>%
     theme_few() + 
     labs(
          title = "Relative Yield vs Relative Price",
-         subtitle = "Comparison vs Comparator countries",
+         subtitle = paste("Comparison vs Comparator countries,", base_year),
          y = "Yield Relative to Median Yield",
          x = "Price Relative to Median Price"
     )
 
 ```
 
-There are no real changes in relative prices. Everything is driven by changes in relative yields. 
+Pakistan has become increasingly uncompetitive in wheat, cotton and rice production, while it has increased its competitiveness in corn and sugarcane. Wheat and rice are of relatively higher quality than in the rest of south asia - using price as a proxy - while cotton, sugar and maize are less. There appears to be a tradeoff between higher yields and lower quality. 
 
-```{r}
-global_crop_changes %>%
-    filter(countrycode %in% comparators) %>%
-    group_by(year, Item) %>%
-    mutate(
-           rel_yield = Yield / median(Yield, na.rm = T),
-           rel_price = price / median(price, na.rm = T)
-    ) %>%
-    ungroup() %>%
-    filter(year >= 2000) %>%
-    filter(countrycode == "PAK") %>%
-    filter(prod_share > 0.01) %>%
-    ggplot(aes(x=year, y=rel_yield)) +
-    geom_hline(yintercept = 1, linetype = "dashed") +
-    geom_line() +
-    theme_few() + 
-    facet_wrap(~Item, scales="free_y") 
-```
+The analysis should then examine what has happened with these crops over time. Using farm-level data on Wheat and cotton, we can begin to get a picture. 
 
+Some takeaways, focusing on Wheat and Cotton. 
 
+\begin{itemize}
 
+    \item The more land allocated for the crop, the less the yield.
+    \item Wheat responds to increased workers, while cotton does not. 
+    \item Cotton Yields respond to increased use of own seed. Wheat Yield decreases with increase of purchased seed
+    \item Cotton yields appear to respond to increased usage of fertilizer, while Wheat does not.
+    \item Use of land leveler on a larger proportion of land appears to decrease Cotton yields 
+    \item Use of harvester on a large proportion of land is associated with higher Wheat yields 
+    \item Use of Organic Manure is associated with lower cotton yields 
+    \item Use of micronutrients is associated with higher wheat yields 
+    \item Both Furrow and Bed and Furrow irrigation methods are associated with higher cotton yields compard to flooding.
+    \item No noticeable distinction in yield for Wheat based on irrigation method 
+    \item Both cotton and wheat prefer Clay soil types 
+    \item Farmers ranking of soil fertility is positively correlated with higher yields 
+    \item Flat land is associated with higher wheat yields 
+    \item Access to canal water is associated with lower wheat and cotton yields 
+    \item Owning a tubewell is associated with higher wheat yields. 
+    \item Cotton yields are higher when land is not waterlogged 
+    \item Wheat yields are higher when there is no salinity 
+    \item Mildly eroded land is apparently associated with higher cotton yields 
+    \item Farmers appear to have a good sense of their soil quality 
+
+\end{itemize}
+
+![regression](./regression1.png)
