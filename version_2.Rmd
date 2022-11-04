@@ -127,7 +127,9 @@ cc_prod_data_all <- df_full %>%
            agri_fem_employ = `Agri Female Employment`/100 * `pop-working-age-female`,
            agri_male_employ = `Agri Male Employment`/100 * `pop-working-age-male`,
 
-           va_per_hectare = `Agri Value Added (constant 2010 US$)` / `Arable Land`
+           va_per_hectare = `Agri Value Added (constant 2010 US$)` / `Arable Land`,
+
+           labor_per_km = agri_employ / `Arable Land`
     )
 
 cc_prod_data <- cc_prod_data_all %>% filter(year %in% years)
@@ -487,7 +489,9 @@ cc_prod_data_all %>%
     filter(regionname == "South Asia") %>%
     filter(countrycode != "MDV") %>%
     filter(year == 2016) %>%
-    ggplot(aes(x=reorder(countrycode, va_per_hectare), y=va_per_hectare)) +
+    ggplot(aes(
+               x=reorder(countrycode, ), 
+               y=va_per_hectare)) +
     geom_bar(stat="identity") +
     geom_bar(data=. %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
     theme_few() +
@@ -496,6 +500,21 @@ cc_prod_data_all %>%
          subtitle = "South Asia",
          y = "Agricultural Value Added (Constant 2010 US$)\n per Hectare of Arable Land",
          x = "Country"
+    )
+
+cc_prod_data_all %>%
+    filter(regionname == "South Asia") %>%
+    filter(countrycode != "MDV") %>%
+    filter(year == 2016) %>%
+    ggplot(aes(
+               x=reorder(countrycode, labor_per_km), 
+               y=labor_per_km)) +
+    geom_bar(stat="identity") +
+    geom_bar(data=. %>% filter(countrycode == "PAK"), fill="orange", stat="identity") +
+    theme_few() +
+    labs(
+         title = "Agriculture Value Added per Hectare of Arable Land",
+         subtitle = "South Asia",
     )
 
 lag_diff <- 16
@@ -577,6 +596,7 @@ gross_vs_va <- global_agri_data %>%
     arrange(year) %>%
     mutate(
            gross_prod_per_ha = gross_production_1416_usd / `Arable Land`,
+           gross_prod_per_l = gross_production_1416_usd / agri_employ,
 
            prev_gross_prod = lag(gross_production_1416_usd, lag_diff),
            prev_gross_prod_per_ha = lag(gross_prod_per_ha, lag_diff),
@@ -600,7 +620,7 @@ gross_vs_va %>%
          y = "% Growth of Gross Production Value of Crops"
     )
 
-names(gross_vs_va)
+# names(gross_vs_va)
 # we have gross production per acre of land. 
 # how much of gross production is because of kg difference in a crop 
 # how much because of price difference?
@@ -1039,7 +1059,7 @@ global_crop_concentrations %>%
     ggplot(aes(x=year, y=value, color=name)) +
     geom_line() +
     theme_few() + 
-    facet_wrap(~countrycode, scales = "free_y" ) +
+    facet_wrap(~countrycode) +
     labs(
          title = "South Asian Crop and Area concentration over Time",
          y = "HHI",

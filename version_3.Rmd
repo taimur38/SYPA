@@ -150,11 +150,9 @@ global_crop_changes <- global_crop_shares %>%
 
 ```
 
-Pakistan produces less value added per hectare of Arable land than almost all of South Asia. This metric is also growing slowly. Growth in total value add has been the slowest in the region, and the amount of arable land has not changed. The growth rates in workers, across both male and female, is the highest in the region. Ultimately this results in the lowest value added per worker growth in the region as well. 
+Pakistan produces less value add per hectare of Arable land than all of South Asia, barring Afghanistan. Growth in total value add has been the slowest in the region, while the amount of Arable land remains constant. At the same time, growth rates in both male and female agricultural workers is the highest in the region. Ultimately this results in the lowest value added per worker growth in the region. In Pakistan, more and more people produce less and less from the ground year after year. We aim to examine the constraints to Agri productivity in the country. 
 
-We want Pakistan to produce more output per person. To achieve this, we are focusing on producing more food given the land that we have. What are the constraints to this, and can we identify what binds?
-
-```{r fig.height = 12, fig.width=10}
+```{r fig.height = 10, fig.width=10}
 
 va_hectare_time <- cc_prod_data_all %>%
     filter(regionname == "South Asia") %>%
@@ -245,38 +243,87 @@ va_hectare_time / (va_worker_time | growth_worker)
 
 ```
 
-What is causing the low growth in value added? Is it because prices are not rising, or because yields are not rising? A basic check shows us that prices are not changing over time. Changes in growth are driven by changes in yields.
+We find that the low growth in value added in Pakistan is primarily due to changes in yields per crop over time, rather than through price changes. (Note - price data through FAO is still suspicious, and may need to come back to it). 
 
-We compare the growth in yields for crops which are important to South Asian countries. This analysis shows us that yields in important crops have not improved in Pakistan. 
+The figure below shows the percent growth in yields for crops, ranked by how much of the production share it is responsible for. It demonstrates that yield growth for the most important crops in Pakistan have been low relative to other South Asian countries. 
 
-```{r fig.height=10, fig.width=10}
+```{r fig.height=10, fig.width=12}
+
+# global_crop_changes %>%
+#     filter(countrycode %in% comparators) %>%
+#     filter(year == base_year) %>%
+#     group_by(countrycode) %>%
+#     arrange(-prev_prod_share) %>%
+#     mutate(
+#            position = row_number(),
+#            prod_share_position = cumsum(prod_share) - prod_share
+#     ) %>%
+#     ungroup() %>%
+#     mutate(Item = str_trunc(Item, 10)) %>%
+#     ggplot(aes(x=position, y=yield_growth)) +
+#     geom_bar(stat="identity", position="dodge") +
+#     theme_few() +
+#     scale_fill_viridis_b() +
+#     facet_wrap(~countrycode) +
+#     theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
+#     labs(
+#          title = "Growth in Yield per Crop (KG/Ha)",
+#          subtitle = paste("Between", base_year - lag_diff, "and", base_year),
+#          x = "Rank of how important this crop used to be",
+#          y = "% Growth"
+#     )
 
 global_crop_changes %>%
     filter(countrycode %in% comparators) %>%
     filter(year == base_year) %>%
     group_by(countrycode) %>%
     arrange(-prev_prod_share) %>%
-    mutate(position = row_number()) %>%
+    mutate(
+           position = row_number(),
+           prod_share_position = cumsum(prev_prod_share) - prev_prod_share
+    ) %>%
     ungroup() %>%
-    mutate(Item = str_trunc(Item, 10)) %>%
-    ggplot(aes(x=position, y=yield_growth)) +
-    geom_bar(stat="identity", position="dodge") +
+    mutate(Item = str_trunc(Item, 15)) %>%
+    ggplot(aes(
+               xmin = prod_share_position * 100, 
+               xmax = ((prod_share_position + prev_prod_share)*100),
+               ymin = 0,
+               ymax = yield_growth
+    )) +
+    geom_rect() +
+    geom_text(data = . %>% 
+              filter(prev_prod_share > 0.04), 
+          aes(
+              label = Item,
+              hjust = "left",
+              angle = 65,
+              x = (prod_share_position + prev_prod_share/2) * 100, 
+              y = yield_growth),
+              nudge_y = 100) +
     theme_few() +
-    scale_fill_viridis_b() +
+    # scale_fill_viridis_b() +
     facet_wrap(~countrycode) +
     theme(axis.text.x = element_text(angle = 45, vjust=0.9)) +
     labs(
          title = "Growth in Yield per Crop (KG/Ha)",
          subtitle = paste("Between", base_year - lag_diff, "and", base_year),
-         x = "Rank of how important this crop used to be",
-         y = "% Growth"
+         x = paste("Share of Crop Production in", base_year - lag_diff),
+         y = "% Growth in Yield"
     )
 
 ```
 
-Everything is driven by changes in relative yields. We can observe Pakistans competitiveness in its top crops against the median south asian performance. With few exceptions, we see relative yields declining from 2000 to 2020. 
+The following figure demonstrates this through a different metric. We can observe Pakistans competitiveness in its top crops against the median south asian performance. With few exceptions, we see relative yields declining from 2000 to 2020. 
 
 ```{r fig.height=10, fig.width=10}
+
+world_rel_dat <- global_crop_changes %>%
+    group_by(year, Item) %>%
+    mutate(
+           rel_world_yield = Yield / median(Yield, na.rm = T),
+           rel_world_price = price / median(price, na.rm = T)
+    )
+
 global_crop_changes %>%
     filter(countrycode %in% comparators) %>%
     group_by(year, Item) %>%
@@ -284,19 +331,24 @@ global_crop_changes %>%
            rel_yield = Yield / median(Yield, na.rm = T),
            rel_price = price / median(price, na.rm = T)
     ) %>%
+    left_join(world_rel_dat) %>%
     ungroup() %>%
-    filter(year >= 2000) %>%
+    pivot_longer(c("rel_yield", "rel_world_yield")) %>%
     filter(countrycode == "PAK") %>%
-    filter(prod_share > 0.01) %>%
-    ggplot(aes(x=year, y=rel_yield)) +
-    geom_hline(yintercept = 1, linetype = "dashed") +
+    filter(year >= 2000) %>%
+    filter(prod_share > 0.02) %>%
+    filter(!(Item %in% c("Onions and shallots, dry (excluding dehydrated)"))) %>%
+    ggplot(aes(x=year, y=value, linetype=name)) +
+    geom_hline(yintercept = 1, linetype = "dotted") +
     geom_line() +
     theme_few() + 
     facet_wrap(~Item, scales="free_y")  +
+    scale_linetype(labels=c("Median World", "Median South Asia")) +
     labs(
-         title = "Pakistan Crop Yields over Time Relative to Median South Asian Yield",
+         title = "Pakistan Crop Competitiveness over Time",
          y = "Relative Yield",
-         x = ""
+         x = "",
+         linetype = "Yield Relative to"
     )
 
 # global_crop_changes %>%
@@ -323,8 +375,7 @@ global_crop_changes %>%
 # TODO: can put into one picture
 ```
 
-Important exceptions are corn and sugarcane. A look at the relative yields and relative prices tells us a bit more about the positioning of these crops, using price as a proxy for quality. 
-
+Important exceptions are corn and sugarcane. A look at the relative yields and relative prices tells us a bit more about the positioning of these crops, using price as a proxy for quality. (The price data is a bit susipicious still, but think it is signalling that markets need to be looked at).   
 ```{r fig.height=10, fig.width=11}
 
 global_crop_changes %>%
